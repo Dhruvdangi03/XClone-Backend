@@ -1,0 +1,10 @@
+spring:
+  datasource:
+    url: ${TEST_DB_URL:jdbc:postgresql://localhost:5432/xclone_test}
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+app:
+  r2:
+    public-base-url: https://media.test
