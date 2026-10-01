@@ -74,6 +74,8 @@ public class UserController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@AuthenticationPrincipal AuthUser me, @Valid @RequestBody DeleteAccountRequest req) {
         userService.deleteAccount(me.id(), req);
+    }
+
     @GetMapping("/me/blocks")
     public CursorPage<UserSummary> blocked(@AuthenticationPrincipal AuthUser me,
             @RequestParam(required = false) Long cursor, @RequestParam(required = false) Integer limit) {
