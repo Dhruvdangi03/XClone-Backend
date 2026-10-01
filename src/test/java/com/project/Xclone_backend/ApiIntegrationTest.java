@@ -345,6 +345,61 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void blockingUsers() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        Account carol = register();
+
+        long a1 = createPost(alice, "{\"content\":\"a1\"}");
+        long b1 = createPost(bob, "{\"content\":\"b1\"}");
+        long carolReplyId = createPost(carol, "{\"content\":\"carol reply\",\"replyToId\":" + a1 + "}");
+        long bobReplyId = createPost(bob, "{\"content\":\"bob reply\",\"replyToId\":" + a1 + "}");
+        mvc.perform(auth(post("/api/users/" + alice.username() + "/follow"), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(post("/api/users/" + bob.username() + "/follow"), alice)).andExpect(status().isNoContent());
+
+        mvc.perform(auth(post("/api/users/" + bob.username() + "/block"), alice)).andExpect(status().isNoContent());
+        mvc.perform(auth(post("/api/users/" + bob.username() + "/block"), alice)).andExpect(status().isNoContent());
+        mvc.perform(auth(post("/api/users/" + alice.username() + "/block"), alice)).andExpect(status().isBadRequest());
+
+        // Blocking removed the follows both ways and shows on the profile.
+        mvc.perform(auth(get("/api/users/" + bob.username()), alice))
+                .andExpect(jsonPath("$.followerCount").value(0))
+                .andExpect(jsonPath("$.followingCount").value(0))
+                .andExpect(jsonPath("$.blockedByMe").value(true));
+        mvc.perform(auth(get("/api/users/me/blocks"), alice))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[*].username", contains(bob.username())));
+        mvc.perform(get("/api/users/me/blocks")).andExpect(status().isUnauthorized());
+
+        // No interactions in either direction.
+        mvc.perform(auth(post("/api/users/" + alice.username() + "/follow"), bob)).andExpect(status().isForbidden());
+        mvc.perform(auth(post("/api/users/" + bob.username() + "/follow"), alice)).andExpect(status().isForbidden());
+        mvc.perform(auth(post("/api/posts/" + a1 + "/like"), bob)).andExpect(status().isForbidden());
+        mvc.perform(auth(post("/api/posts/" + b1 + "/like"), alice)).andExpect(status().isForbidden());
+        mvc.perform(json(auth(post("/api/posts"), bob), "{\"content\":\"hi\",\"replyToId\":" + a1 + "}"))
+                .andExpect(status().isForbidden());
+
+        // Content is hidden from both sides, but not from others.
+        mvc.perform(auth(get("/api/posts/" + a1), bob)).andExpect(status().isForbidden());
+        mvc.perform(auth(get("/api/users/" + bob.username() + "/posts"), alice)).andExpect(status().isForbidden());
+        mvc.perform(auth(get("/api/posts/" + a1 + "/replies"), alice))
+                .andExpect(jsonPath("$.items[*].id", contains((int) carolReplyId)));
+        mvc.perform(auth(get("/api/posts/" + a1 + "/replies"), carol))
+                .andExpect(jsonPath("$.items[*].id", contains((int) carolReplyId, (int) bobReplyId)));
+        mvc.perform(auth(post("/api/users/" + carol.username() + "/follow"), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/users/" + carol.username() + "/followers"), alice))
+                .andExpect(jsonPath("$.items", hasSize(0)));
+        mvc.perform(get("/api/users/" + carol.username() + "/followers"))
+                .andExpect(jsonPath("$.items[*].username", contains(bob.username())));
+
+        mvc.perform(auth(delete("/api/users/" + bob.username() + "/block"), alice)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/users/" + bob.username()), alice))
+                .andExpect(jsonPath("$.blockedByMe").value(false));
+        mvc.perform(auth(post("/api/posts/" + a1 + "/like"), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/users/me/blocks"), alice)).andExpect(jsonPath("$.items", hasSize(0)));
+    }
+
+    @Test
     void postWithUploadedMedia() throws Exception {
         Account alice = register();
         Account bob = register();

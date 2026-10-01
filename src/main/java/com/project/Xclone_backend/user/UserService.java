@@ -7,6 +7,8 @@ import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.project.Xclone_backend.block.Block;
+import com.project.Xclone_backend.block.BlockRepository;
 import com.project.Xclone_backend.common.ApiException;
 import com.project.Xclone_backend.common.CursorPage;
 import com.project.Xclone_backend.follow.Follow;
@@ -29,6 +31,7 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final FollowRepository followRepository;
+    private final BlockRepository blockRepository;
     private final UserMapper userMapper;
     private final MediaService mediaService;
     private final UserReportRepository userReportRepository;
@@ -40,6 +43,13 @@ public class UserService {
 
     public User requireById(Long id) {
         return userRepository.findById(id).orElseThrow(() -> ApiException.notFound("User not found"));
+    }
+
+    /** Throws if either user has blocked the other. */
+    public void requireNotBlocked(Long userId, Long otherId) {
+        if (blockRepository.existsBetween(userId, otherId)) {
+            throw ApiException.forbidden("This action is not allowed because of a block");
+        }
     }
 
     @Transactional(readOnly = true)
@@ -82,10 +92,12 @@ public class UserService {
         User user = requireByUsername(username);
         boolean followedByMe = viewerId != null
                 && followRepository.existsByFollowerIdAndFolloweeId(viewerId, user.getId());
+        boolean blockedByMe = viewerId != null
+                && blockRepository.existsByBlockerIdAndBlockedId(viewerId, user.getId());
         return userMapper.toProfile(user,
                 followRepository.countByFolloweeId(user.getId()),
                 followRepository.countByFollowerId(user.getId()),
-                followedByMe);
+                followedByMe, blockedByMe);
     }
 
     @Transactional
@@ -94,6 +106,7 @@ public class UserService {
         if (target.getId().equals(followerId)) {
             throw ApiException.badRequest("You cannot follow yourself");
         }
+        requireNotBlocked(followerId, target.getId());
         followRepository.follow(followerId, target.getId());
     }
 
@@ -115,20 +128,48 @@ public class UserService {
         followRepository.unfollow(followerId, target.getId());
     }
 
+    /** Blocking also removes any follow between the two users, in both directions. */
+    @Transactional
+    public void block(Long blockerId, String username) {
+        User target = requireByUsername(username);
+        if (target.getId().equals(blockerId)) {
+            throw ApiException.badRequest("You cannot block yourself");
+        }
+        blockRepository.block(blockerId, target.getId());
+        followRepository.unfollow(blockerId, target.getId());
+        followRepository.unfollow(target.getId(), blockerId);
+    }
+
+    @Transactional
+    public void unblock(Long blockerId, String username) {
+        User target = requireByUsername(username);
+        blockRepository.unblock(blockerId, target.getId());
+    }
+
     @Transactional(readOnly = true)
-    public CursorPage<UserSummary> followers(String username, Long cursor, Integer limit) {
+    public CursorPage<UserSummary> blocked(Long userId, Long cursor, Integer limit) {
+        int n = CursorPage.clampLimit(limit);
+        List<Block> rows = blockRepository.findBlocked(userId, CursorPage.cursorOrMax(cursor), Limit.of(n + 1));
+        return CursorPage.of(rows, n, Block::getId,
+                page -> page.stream().map(b -> userMapper.toSummary(b.getBlocked())).toList());
+    }
+
+    @Transactional(readOnly = true)
+    public CursorPage<UserSummary> followers(String username, Long viewerId, Long cursor, Integer limit) {
         User user = requireByUsername(username);
         int n = CursorPage.clampLimit(limit);
-        List<Follow> rows = followRepository.findFollowers(user.getId(), CursorPage.cursorOrMax(cursor), Limit.of(n + 1));
+        List<Follow> rows = followRepository.findFollowers(user.getId(), viewerId, CursorPage.cursorOrMax(cursor),
+                Limit.of(n + 1));
         return CursorPage.of(rows, n, Follow::getId,
                 page -> page.stream().map(f -> userMapper.toSummary(f.getFollower())).toList());
     }
 
     @Transactional(readOnly = true)
-    public CursorPage<UserSummary> following(String username, Long cursor, Integer limit) {
+    public CursorPage<UserSummary> following(String username, Long viewerId, Long cursor, Integer limit) {
         User user = requireByUsername(username);
         int n = CursorPage.clampLimit(limit);
-        List<Follow> rows = followRepository.findFollowing(user.getId(), CursorPage.cursorOrMax(cursor), Limit.of(n + 1));
+        List<Follow> rows = followRepository.findFollowing(user.getId(), viewerId, CursorPage.cursorOrMax(cursor),
+                Limit.of(n + 1));
         return CursorPage.of(rows, n, Follow::getId,
                 page -> page.stream().map(f -> userMapper.toSummary(f.getFollowee())).toList());
     }
