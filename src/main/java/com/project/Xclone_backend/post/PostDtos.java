@@ -22,6 +22,9 @@ public final class PostDtos {
             Long replyToId) {
     }
 
+    public record UpdatePostRequest(@NotBlank @Size(max = Post.MAX_LENGTH) String content) {
+    }
+
     public record PostResponse(Long id, UserSummary author, String content, List<String> mediaUrls,
             Long replyToId, int likeCount, int replyCount, boolean likedByMe, Instant createdAt) {
     }

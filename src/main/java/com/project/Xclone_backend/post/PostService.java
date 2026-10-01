@@ -14,6 +14,7 @@ import com.project.Xclone_backend.like.PostLike;
 import com.project.Xclone_backend.media.MediaService;
 import com.project.Xclone_backend.post.PostDtos.CreatePostRequest;
 import com.project.Xclone_backend.post.PostDtos.PostResponse;
+import com.project.Xclone_backend.post.PostDtos.UpdatePostRequest;
 import com.project.Xclone_backend.user.User;
 import com.project.Xclone_backend.user.UserDtos.UserSummary;
 import com.project.Xclone_backend.user.UserMapper;
@@ -58,6 +59,16 @@ public class PostService {
     @Transactional(readOnly = true)
     public PostResponse get(Long postId, Long viewerId) {
         return postMapper.toResponse(requireLive(postId), viewerId);
+    }
+
+    @Transactional
+    public PostResponse update(Long postId, Long userId, UpdatePostRequest req) {
+        Post post = requireLive(postId);
+        if (!post.getAuthor().getId().equals(userId)) {
+            throw ApiException.forbidden("You can only edit your own posts");
+        }
+        post.setContent(req.content().strip());
+        return postMapper.toResponse(post, userId);
     }
 
     @Transactional
