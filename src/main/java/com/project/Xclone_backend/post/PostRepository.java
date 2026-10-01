@@ -37,6 +37,14 @@ public interface PostRepository extends JpaRepository<Post, Long> {
             """)
     List<Post> findReplies(Long parentId, long cursor, Limit limit);
 
+    /** Posts and replies tagged with a normalized hashtag name, newest first. */
+    @Query("""
+            select p from Post p join fetch p.author join p.hashtags h
+            where h.name = :name and p.deleted = false and p.id < :cursor
+            order by p.id desc
+            """)
+    List<Post> findByHashtag(String name, long cursor, Limit limit);
+
     /** Home timeline: top-level posts by the user and everyone they follow, newest first. */
     @Query("""
             select p from Post p join fetch p.author

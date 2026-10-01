@@ -95,6 +95,12 @@ public class PostController {
         return postService.userLikes(username, idOf(me), cursor, limit);
     }
 
+    @GetMapping("/hashtags/{name}/posts")
+    public CursorPage<PostResponse> hashtagPosts(@PathVariable String name, @AuthenticationPrincipal AuthUser me,
+            @RequestParam(required = false) Long cursor, @RequestParam(required = false) Integer limit) {
+        return postService.hashtagPosts(name, idOf(me), cursor, limit);
+    }
+
     @GetMapping("/timeline")
     public CursorPage<PostResponse> timeline(@AuthenticationPrincipal AuthUser me,
             @RequestParam(required = false) Long cursor, @RequestParam(required = false) Integer limit) {

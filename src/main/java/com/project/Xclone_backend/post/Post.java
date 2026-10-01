@@ -2,11 +2,14 @@ package com.project.Xclone_backend.post;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.hibernate.annotations.BatchSize;
 import org.hibernate.annotations.CreationTimestamp;
 
+import com.project.Xclone_backend.hashtag.Hashtag;
 import com.project.Xclone_backend.user.User;
 
 import jakarta.persistence.CascadeType;
@@ -18,6 +21,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinTable;
+import jakarta.persistence.ManyToMany;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderBy;
@@ -72,6 +77,14 @@ public class Post {
     @OrderBy("position")
     @BatchSize(size = 50)
     private List<PostMedia> media = new ArrayList<>();
+
+    /** Derived from content; kept in sync by PostService on create and edit. */
+    @ManyToMany
+    @JoinTable(name = "post_hashtags",
+            joinColumns = @JoinColumn(name = "post_id"),
+            inverseJoinColumns = @JoinColumn(name = "hashtag_id"),
+            indexes = @Index(name = "idx_post_hashtags_hashtag", columnList = "hashtag_id, post_id"))
+    private Set<Hashtag> hashtags = new HashSet<>();
 
     public void addMedia(String r2Key) {
         PostMedia m = new PostMedia();
