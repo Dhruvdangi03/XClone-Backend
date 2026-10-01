@@ -19,6 +19,7 @@ import com.project.Xclone_backend.auth.AuthDtos.RegisterRequest;
 import com.project.Xclone_backend.common.ApiException;
 import com.project.Xclone_backend.config.JwtProperties;
 import com.project.Xclone_backend.security.JwtService;
+import com.project.Xclone_backend.user.AccountStatus;
 import com.project.Xclone_backend.user.User;
 import com.project.Xclone_backend.user.UserMapper;
 import com.project.Xclone_backend.user.UserRepository;
@@ -63,6 +64,12 @@ public class AuthService {
         User user = (id.contains("@") ? userRepository.findByEmail(id) : userRepository.findByUsername(id))
                 .filter(u -> passwordEncoder.matches(req.password(), u.getPasswordHash()))
                 .orElseThrow(() -> ApiException.unauthorized("Invalid credentials"));
+        // Checked only after the password matches, so a wrong password never changes or reveals the status.
+        if (user.getStatus() == AccountStatus.DEACTIVATED) {
+            user.setStatus(AccountStatus.ACTIVE);
+        } else if (user.getStatus() != AccountStatus.ACTIVE) {
+            throw ApiException.unauthorized("Invalid credentials");
+        }
         return issueTokens(user);
     }
 
@@ -78,6 +85,9 @@ public class AuthService {
         }
         if (token.getExpiresAt().isBefore(Instant.now())) {
             throw ApiException.unauthorized("Refresh token expired");
+        }
+        if (token.getUser().getStatus() != AccountStatus.ACTIVE) {
+            throw ApiException.unauthorized("Invalid refresh token");
         }
         token.setRevoked(true);
         return issueTokens(token.getUser());

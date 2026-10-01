@@ -305,6 +305,173 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void changeUsernameAndEmail() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        String newName = "n" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+
+        mvc.perform(json(patch("/api/users/me/username"), "{\"username\":\"" + newName + "\"}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(json(auth(patch("/api/users/me/username"), alice), "{\"username\":\"a!\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(json(auth(patch("/api/users/me/username"), alice), "{\"username\":\"" + bob.username() + "\"}"))
+                .andExpect(status().isConflict());
+        mvc.perform(json(auth(patch("/api/users/me/username"), alice),
+                        "{\"username\":\"" + alice.username().toUpperCase() + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.username").value(alice.username()));
+
+        mvc.perform(json(auth(patch("/api/users/me/username"), alice), "{\"username\":\"" + newName.toUpperCase() + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(alice.id()))
+                .andExpect(jsonPath("$.username").value(newName))
+                .andExpect(jsonPath("$.displayName").value("Test User"))
+                .andExpect(jsonPath("$.passwordHash").doesNotExist());
+        mvc.perform(get("/api/users/" + alice.username())).andExpect(status().isNotFound());
+        mvc.perform(get("/api/users/" + newName)).andExpect(jsonPath("$.id").value(alice.id()));
+        mvc.perform(auth(get("/api/users/me"), alice)).andExpect(jsonPath("$.username").value(newName));
+        mvc.perform(json(post("/api/auth/login"), "{\"usernameOrEmail\":\"" + newName + "\",\"password\":\"password123\"}"))
+                .andExpect(status().isOk());
+        mvc.perform(json(auth(patch("/api/users/me/username"), bob), "{\"username\":\"" + newName + "\"}"))
+                .andExpect(status().isConflict());
+
+        String newEmail = newName + "@Example.org";
+        mvc.perform(json(auth(patch("/api/users/me/email"), alice), "{\"email\":\"not-an-email\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(json(auth(patch("/api/users/me/email"), alice), "{\"email\":\"" + bob.username() + "@example.com\"}"))
+                .andExpect(status().isConflict());
+        mvc.perform(json(auth(patch("/api/users/me/email"), alice), "{\"email\":\"" + newEmail + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.email").value(newEmail.toLowerCase()))
+                .andExpect(jsonPath("$.username").value(newName));
+        mvc.perform(json(post("/api/auth/login"), "{\"usernameOrEmail\":\"" + newEmail + "\",\"password\":\"password123\"}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void changePassword() throws Exception {
+        Account a = register();
+        String url = "/api/users/me/password";
+
+        mvc.perform(json(patch(url), "{\"currentPassword\":\"password123\",\"newPassword\":\"newpassword1\"}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(json(auth(patch(url), a), "{\"currentPassword\":\"wrong-pass\",\"newPassword\":\"newpassword1\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(json(auth(patch(url), a), "{\"currentPassword\":\"password123\",\"newPassword\":\"short\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(json(auth(patch(url), a), "{\"currentPassword\":\"password123\",\"newPassword\":\"newpassword1\"}"))
+                .andExpect(status().isNoContent())
+                .andExpect(jsonPath("$").doesNotExist());
+
+        mvc.perform(json(post("/api/auth/login"), "{\"usernameOrEmail\":\"" + a.username() + "\",\"password\":\"password123\"}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(json(post("/api/auth/login"), "{\"usernameOrEmail\":\"" + a.username() + "\",\"password\":\"newpassword1\"}"))
+                .andExpect(status().isOk());
+        // Existing sessions are signed out.
+        mvc.perform(json(post("/api/auth/refresh"), refreshBody(a.refreshToken()))).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void deactivateAccount() throws Exception {
+        Account a = register();
+        long postId = createPost(a, "{\"content\":\"still here\"}");
+
+        mvc.perform(post("/api/users/me/deactivate")).andExpect(status().isUnauthorized());
+        mvc.perform(auth(post("/api/users/me/deactivate"), a)).andExpect(status().isNoContent());
+
+        // The old access token stops working immediately, and no new session can be started.
+        mvc.perform(auth(get("/api/users/me"), a)).andExpect(status().isUnauthorized());
+        mvc.perform(json(auth(post("/api/posts"), a), "{\"content\":\"nope\"}")).andExpect(status().isUnauthorized());
+        mvc.perform(json(post("/api/auth/refresh"), refreshBody(a.refreshToken()))).andExpect(status().isUnauthorized());
+
+        // A wrong password does not reactivate: the old token would work again if the status had flipped.
+        mvc.perform(json(post("/api/auth/login"), "{\"usernameOrEmail\":\"" + a.username() + "\",\"password\":\"wrong-pass\"}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(auth(get("/api/users/me"), a)).andExpect(status().isUnauthorized());
+
+        // Nothing is deleted.
+        mvc.perform(get("/api/users/" + a.username())).andExpect(status().isOk());
+        mvc.perform(get("/api/posts/" + postId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content").value("still here"));
+
+        // Logging in with the correct password (by email here) reactivates and issues a normal token pair.
+        String body = mvc.perform(json(post("/api/auth/login"),
+                        "{\"usernameOrEmail\":\"" + a.username() + "@example.com\",\"password\":\"password123\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").isNotEmpty())
+                .andExpect(jsonPath("$.refreshToken").isNotEmpty())
+                .andExpect(jsonPath("$.user.id").value(a.id()))
+                .andReturn().getResponse().getContentAsString();
+        Account back = new Account(a.id(), a.username(), JsonPath.read(body, "$.accessToken"),
+                JsonPath.read(body, "$.refreshToken"));
+
+        mvc.perform(auth(get("/api/users/me"), back)).andExpect(status().isOk());
+        createPost(back, "{\"content\":\"back again\"}");
+        mvc.perform(json(post("/api/auth/refresh"), refreshBody(back.refreshToken()))).andExpect(status().isOk());
+        // Sessions revoked at deactivation stay revoked.
+        mvc.perform(json(post("/api/auth/refresh"), refreshBody(a.refreshToken()))).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void deleteAccount() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        Account carol = register();
+        String tag = "d" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+
+        long bobPost = createPost(bob, "{\"content\":\"bob here\"}");
+        long alicePost = createPost(alice, "{\"content\":\"alice #" + tag + "\"}");
+        createPost(alice, "{\"content\":\"reply from alice\",\"replyToId\":" + bobPost + "}");
+        long bobReply = createPost(bob, "{\"content\":\"reply to alice\",\"replyToId\":" + alicePost + "}");
+        mvc.perform(auth(post("/api/posts/" + bobPost + "/like"), alice)).andExpect(status().isNoContent());
+        mvc.perform(auth(post("/api/users/" + bob.username() + "/follow"), alice)).andExpect(status().isNoContent());
+        mvc.perform(auth(post("/api/users/" + alice.username() + "/follow"), carol)).andExpect(status().isNoContent());
+        mvc.perform(json(auth(post("/api/users/" + alice.username() + "/report"), bob), "{\"reason\":\"SPAM\"}"))
+                .andExpect(status().isNoContent());
+        mvc.perform(get("/api/posts/" + bobPost))
+                .andExpect(jsonPath("$.likeCount").value(1))
+                .andExpect(jsonPath("$.replyCount").value(1));
+
+        mvc.perform(json(delete("/api/users/me"), "{\"password\":\"password123\"}")).andExpect(status().isUnauthorized());
+        mvc.perform(json(auth(delete("/api/users/me"), alice), "{}")).andExpect(status().isBadRequest());
+        mvc.perform(json(auth(delete("/api/users/me"), alice), "{\"password\":\"wrong-pass\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/users/" + alice.username())).andExpect(status().isOk());
+
+        mvc.perform(json(auth(delete("/api/users/me"), alice), "{\"password\":\"password123\"}"))
+                .andExpect(status().isNoContent());
+
+        // The account is gone and cannot be used.
+        mvc.perform(get("/api/users/" + alice.username())).andExpect(status().isNotFound());
+        mvc.perform(get("/api/users/search").param("q", alice.username())).andExpect(jsonPath("$", hasSize(0)));
+        mvc.perform(auth(get("/api/users/me"), alice)).andExpect(status().isUnauthorized());
+        mvc.perform(json(post("/api/auth/refresh"), refreshBody(alice.refreshToken()))).andExpect(status().isUnauthorized());
+        mvc.perform(json(post("/api/auth/login"), "{\"usernameOrEmail\":\"" + alice.username() + "\",\"password\":\"password123\"}"))
+                .andExpect(status().isUnauthorized());
+
+        // Alice's content and activity are removed, and counts on other users' posts are corrected.
+        mvc.perform(get("/api/posts/" + alicePost)).andExpect(status().isNotFound());
+        mvc.perform(get("/api/hashtags/" + tag + "/posts")).andExpect(jsonPath("$.items", hasSize(0)));
+        mvc.perform(get("/api/posts/" + bobPost))
+                .andExpect(jsonPath("$.likeCount").value(0))
+                .andExpect(jsonPath("$.replyCount").value(0));
+        mvc.perform(get("/api/users/" + bob.username())).andExpect(jsonPath("$.followerCount").value(0));
+        mvc.perform(get("/api/users/" + carol.username())).andExpect(jsonPath("$.followingCount").value(0));
+
+        // Other users' content and reports stay intact.
+        mvc.perform(get("/api/posts/" + bobReply))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.replyToId").value(alicePost));
+        org.assertj.core.api.Assertions.assertThat(
+                userReportRepository.existsByReporterIdAndReportedUserId(bob.id(), alice.id())).isTrue();
+
+        // The username and email are free again.
+        mvc.perform(json(post("/api/auth/register"), registerBody(alice.username(), alice.username())))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
     void followAndTimelinePaging() throws Exception {
         Account alice = register();
         Account bob = register();

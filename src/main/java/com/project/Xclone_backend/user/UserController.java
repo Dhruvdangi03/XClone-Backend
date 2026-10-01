@@ -18,6 +18,10 @@ import org.springframework.web.bind.annotation.RestController;
 import com.project.Xclone_backend.common.CursorPage;
 import com.project.Xclone_backend.report.ReportDtos.ReportRequest;
 import com.project.Xclone_backend.security.AuthUser;
+import com.project.Xclone_backend.user.UserDtos.ChangeEmailRequest;
+import com.project.Xclone_backend.user.UserDtos.ChangePasswordRequest;
+import com.project.Xclone_backend.user.UserDtos.ChangeUsernameRequest;
+import com.project.Xclone_backend.user.UserDtos.DeleteAccountRequest;
 import com.project.Xclone_backend.user.UserDtos.ProfileResponse;
 import com.project.Xclone_backend.user.UserDtos.UpdateProfileRequest;
 import com.project.Xclone_backend.user.UserDtos.UserResponse;
@@ -43,6 +47,33 @@ public class UserController {
         return userService.updateProfile(me.id(), req);
     }
 
+    @PatchMapping("/me/username")
+    public UserResponse changeUsername(@AuthenticationPrincipal AuthUser me,
+            @Valid @RequestBody ChangeUsernameRequest req) {
+        return userService.changeUsername(me.id(), req);
+    }
+
+    @PatchMapping("/me/email")
+    public UserResponse changeEmail(@AuthenticationPrincipal AuthUser me, @Valid @RequestBody ChangeEmailRequest req) {
+        return userService.changeEmail(me.id(), req);
+    }
+
+    @PatchMapping("/me/password")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void changePassword(@AuthenticationPrincipal AuthUser me, @Valid @RequestBody ChangePasswordRequest req) {
+        userService.changePassword(me.id(), req);
+    }
+
+    @PostMapping("/me/deactivate")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deactivate(@AuthenticationPrincipal AuthUser me) {
+        userService.deactivate(me.id());
+    }
+
+    @DeleteMapping("/me")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@AuthenticationPrincipal AuthUser me, @Valid @RequestBody DeleteAccountRequest req) {
+        userService.deleteAccount(me.id(), req);
     @GetMapping("/me/blocks")
     public CursorPage<UserSummary> blocked(@AuthenticationPrincipal AuthUser me,
             @RequestParam(required = false) Long cursor, @RequestParam(required = false) Integer limit) {

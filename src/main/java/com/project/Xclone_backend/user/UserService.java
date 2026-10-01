@@ -4,18 +4,26 @@ import java.util.List;
 import java.util.Locale;
 
 import org.springframework.data.domain.Limit;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.project.Xclone_backend.auth.RefreshTokenRepository;
 import com.project.Xclone_backend.block.Block;
 import com.project.Xclone_backend.block.BlockRepository;
 import com.project.Xclone_backend.common.ApiException;
 import com.project.Xclone_backend.common.CursorPage;
 import com.project.Xclone_backend.follow.Follow;
 import com.project.Xclone_backend.follow.FollowRepository;
+import com.project.Xclone_backend.like.LikeRepository;
 import com.project.Xclone_backend.media.MediaService;
+import com.project.Xclone_backend.post.PostRepository;
 import com.project.Xclone_backend.report.ReportReason;
 import com.project.Xclone_backend.report.UserReportRepository;
+import com.project.Xclone_backend.user.UserDtos.ChangeEmailRequest;
+import com.project.Xclone_backend.user.UserDtos.ChangePasswordRequest;
+import com.project.Xclone_backend.user.UserDtos.ChangeUsernameRequest;
+import com.project.Xclone_backend.user.UserDtos.DeleteAccountRequest;
 import com.project.Xclone_backend.user.UserDtos.ProfileResponse;
 import com.project.Xclone_backend.user.UserDtos.UpdateProfileRequest;
 import com.project.Xclone_backend.user.UserDtos.UserResponse;
@@ -35,9 +43,14 @@ public class UserService {
     private final UserMapper userMapper;
     private final MediaService mediaService;
     private final UserReportRepository userReportRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final RefreshTokenRepository refreshTokenRepository;
+    private final PostRepository postRepository;
+    private final LikeRepository likeRepository;
 
     public User requireByUsername(String username) {
         return userRepository.findByUsername(username.toLowerCase(Locale.ROOT))
+                .filter(u -> u.getStatus() != AccountStatus.DELETED)
                 .orElseThrow(() -> ApiException.notFound("User not found"));
     }
 
@@ -77,6 +90,84 @@ public class UserService {
             user.setBannerKey(resolveMediaKey(userId, req.bannerKey()));
         }
         return userMapper.toResponse(user);
+    }
+
+    @Transactional
+    public UserResponse changeUsername(Long userId, ChangeUsernameRequest req) {
+        User user = requireById(userId);
+        String username = req.username().toLowerCase(Locale.ROOT);
+        if (!username.equals(user.getUsername())) {
+            if (userRepository.existsByUsername(username)) {
+                throw ApiException.conflict("Username is already taken");
+            }
+            user.setUsername(username);
+        }
+        return userMapper.toResponse(user);
+    }
+
+    @Transactional
+    public UserResponse changeEmail(Long userId, ChangeEmailRequest req) {
+        User user = requireById(userId);
+        String email = req.email().toLowerCase(Locale.ROOT);
+        if (!email.equals(user.getEmail())) {
+            if (userRepository.existsByEmail(email)) {
+                throw ApiException.conflict("Email is already registered");
+            }
+            user.setEmail(email);
+        }
+        return userMapper.toResponse(user);
+    }
+
+    /** Also signs out every session: refresh tokens are revoked, so each device must log in again. */
+    @Transactional
+    public void changePassword(Long userId, ChangePasswordRequest req) {
+        User user = requireById(userId);
+        requirePassword(user, req.currentPassword());
+        user.setPasswordHash(passwordEncoder.encode(req.newPassword()));
+        refreshTokenRepository.revokeAllForUser(userId);
+    }
+
+    /** Nothing is deleted and all sessions end; logging in with the correct password reactivates the account. */
+    @Transactional
+    public void deactivate(Long userId) {
+        User user = requireById(userId);
+        user.setStatus(AccountStatus.DEACTIVATED);
+        refreshTokenRepository.revokeAllForUser(userId);
+    }
+
+    /**
+     * Removes the user's personal data, likes, follows, sessions and post content. The row itself stays as an
+     * anonymized placeholder because other users' replies and reports reference it and its posts.
+     */
+    @Transactional
+    public void deleteAccount(Long userId, DeleteAccountRequest req) {
+        User user = requireById(userId);
+        requirePassword(user, req.password());
+
+        postRepository.decrementReplyCountsForAuthor(userId);
+        postRepository.decrementLikeCountsForLiker(userId);
+        likeRepository.deleteAllByUser(userId);
+        followRepository.deleteAllInvolving(userId);
+        refreshTokenRepository.deleteAllForUser(userId);
+        postRepository.deleteHashtagLinksForAuthor(userId);
+        postRepository.deleteMediaForAuthor(userId);
+        postRepository.softDeleteAndClearAllByAuthor(userId);
+
+        // '~' is not allowed in usernames, so these can never collide with a real account.
+        user.setUsername("~" + userId);
+        user.setEmail("~" + userId + "@deleted.invalid");
+        user.setPasswordHash("!");
+        user.setDisplayName("Deleted user");
+        user.setBio(null);
+        user.setAvatarKey(null);
+        user.setBannerKey(null);
+        user.setStatus(AccountStatus.DELETED);
+    }
+
+    private void requirePassword(User user, String password) {
+        if (!passwordEncoder.matches(password, user.getPasswordHash())) {
+            throw ApiException.badRequest("Current password is incorrect");
+        }
     }
 
     private String resolveMediaKey(Long userId, String key) {
