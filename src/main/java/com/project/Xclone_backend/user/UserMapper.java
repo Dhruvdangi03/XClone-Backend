@@ -24,9 +24,10 @@ public class UserMapper {
         return new UserSummary(u.getId(), u.getUsername(), u.getDisplayName(), r2.publicUrl(u.getAvatarKey()));
     }
 
-    public ProfileResponse toProfile(User u, long followers, long following, boolean followedByMe) {
+    public ProfileResponse toProfile(User u, long followers, long following, boolean followedByMe,
+            boolean blockedByMe) {
         return new ProfileResponse(u.getId(), u.getUsername(), u.getDisplayName(), u.getBio(),
                 r2.publicUrl(u.getAvatarKey()), r2.publicUrl(u.getBannerKey()), u.getCreatedAt(),
-                followers, following, followedByMe);
+                followers, following, followedByMe, blockedByMe);
     }
 }

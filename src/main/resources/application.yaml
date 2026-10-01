@@ -23,7 +23,7 @@ app:
   jwt:
     # Must be at least 32 bytes (256 bits). Override in every real environment.
     secret: ${JWT_SECRET:dev-only-secret-change-me-dev-only-secret-change-me}
-    access-ttl: ${JWT_ACCESS_TTL:15m}
+    access-ttl: ${JWT_ACCESS_TTL:1d}
     refresh-ttl: ${JWT_REFRESH_TTL:30d}
   r2:
     account-id: ${R2_ACCOUNT_ID:}

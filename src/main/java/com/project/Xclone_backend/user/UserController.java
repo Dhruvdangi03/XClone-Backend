@@ -74,6 +74,10 @@ public class UserController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@AuthenticationPrincipal AuthUser me, @Valid @RequestBody DeleteAccountRequest req) {
         userService.deleteAccount(me.id(), req);
+    @GetMapping("/me/blocks")
+    public CursorPage<UserSummary> blocked(@AuthenticationPrincipal AuthUser me,
+            @RequestParam(required = false) Long cursor, @RequestParam(required = false) Integer limit) {
+        return userService.blocked(me.id(), cursor, limit);
     }
 
     @GetMapping("/search")
@@ -104,16 +108,28 @@ public class UserController {
             @Valid @RequestBody ReportRequest req) {
         userService.report(me.id(), username, req.reason());
     }
+  
+    @PostMapping("/{username}/block")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void block(@PathVariable String username, @AuthenticationPrincipal AuthUser me) {
+        userService.block(me.id(), username);
+    }
+
+    @DeleteMapping("/{username}/block")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void unblock(@PathVariable String username, @AuthenticationPrincipal AuthUser me) {
+        userService.unblock(me.id(), username);
+    }
 
     @GetMapping("/{username}/followers")
-    public CursorPage<UserSummary> followers(@PathVariable String username,
+    public CursorPage<UserSummary> followers(@PathVariable String username, @AuthenticationPrincipal AuthUser me,
             @RequestParam(required = false) Long cursor, @RequestParam(required = false) Integer limit) {
-        return userService.followers(username, cursor, limit);
+        return userService.followers(username, me == null ? null : me.id(), cursor, limit);
     }
 
     @GetMapping("/{username}/following")
-    public CursorPage<UserSummary> following(@PathVariable String username,
+    public CursorPage<UserSummary> following(@PathVariable String username, @AuthenticationPrincipal AuthUser me,
             @RequestParam(required = false) Long cursor, @RequestParam(required = false) Integer limit) {
-        return userService.following(username, cursor, limit);
+        return userService.following(username, me == null ? null : me.id(), cursor, limit);
     }
 }
