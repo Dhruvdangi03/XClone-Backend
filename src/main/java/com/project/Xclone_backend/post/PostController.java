@@ -4,6 +4,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.project.Xclone_backend.common.CursorPage;
 import com.project.Xclone_backend.post.PostDtos.CreatePostRequest;
 import com.project.Xclone_backend.post.PostDtos.PostResponse;
+import com.project.Xclone_backend.post.PostDtos.UpdatePostRequest;
 import com.project.Xclone_backend.security.AuthUser;
 import com.project.Xclone_backend.user.UserDtos.UserSummary;
 
@@ -37,6 +39,12 @@ public class PostController {
     @GetMapping("/posts/{id}")
     public PostResponse get(@PathVariable Long id, @AuthenticationPrincipal AuthUser me) {
         return postService.get(id, idOf(me));
+    }
+
+    @PatchMapping("/posts/{id}")
+    public PostResponse update(@PathVariable Long id, @AuthenticationPrincipal AuthUser me,
+            @Valid @RequestBody UpdatePostRequest req) {
+        return postService.update(id, me.id(), req);
     }
 
     @DeleteMapping("/posts/{id}")

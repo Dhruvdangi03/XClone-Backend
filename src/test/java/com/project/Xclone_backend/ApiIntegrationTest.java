@@ -145,6 +145,43 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void editingPosts() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        long postId = createPost(alice, "{\"content\":\"original\"}");
+        mvc.perform(auth(post("/api/posts/" + postId + "/like"), bob)).andExpect(status().isNoContent());
+        String before = mvc.perform(get("/api/posts/" + postId)).andReturn().getResponse().getContentAsString();
+
+        mvc.perform(json(patch("/api/posts/" + postId), "{\"content\":\"x\"}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(json(auth(patch("/api/posts/" + postId), bob), "{\"content\":\"hijack\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(json(auth(patch("/api/posts/999999999"), alice), "{\"content\":\"x\"}"))
+                .andExpect(status().isNotFound());
+        mvc.perform(json(auth(patch("/api/posts/" + postId), alice), "{\"content\":\"   \"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(json(auth(patch("/api/posts/" + postId), alice), "{\"content\":\"" + "a".repeat(281) + "\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/posts/" + postId)).andExpect(jsonPath("$.content").value("original"));
+
+        mvc.perform(json(auth(patch("/api/posts/" + postId), alice), "{\"content\":\"  edited  \"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(postId))
+                .andExpect(jsonPath("$.content").value("edited"))
+                .andExpect(jsonPath("$.author.username").value(alice.username()))
+                .andExpect(jsonPath("$.likeCount").value(1));
+
+        String after = mvc.perform(get("/api/posts/" + postId)).andReturn().getResponse().getContentAsString();
+        org.junit.jupiter.api.Assertions.assertEquals(JsonPath.read(before, "$.createdAt").toString(),
+                JsonPath.read(after, "$.createdAt").toString());
+        org.junit.jupiter.api.Assertions.assertEquals("edited", JsonPath.read(after, "$.content"));
+
+        mvc.perform(auth(delete("/api/posts/" + postId), alice)).andExpect(status().isNoContent());
+        mvc.perform(json(auth(patch("/api/posts/" + postId), alice), "{\"content\":\"x\"}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void followAndTimelinePaging() throws Exception {
         Account alice = register();
         Account bob = register();
