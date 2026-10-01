@@ -24,6 +24,11 @@ public interface LikeRepository extends JpaRepository<PostLike, Long> {
     @Query("delete from PostLike l where l.user.id = :userId and l.post.id = :postId")
     int unlike(Long userId, Long postId);
 
+    /** Call {@code PostRepository.decrementLikeCountsForLiker} first so like counts stay correct. */
+    @Modifying
+    @Query("delete from PostLike l where l.user.id = :userId")
+    void deleteAllByUser(Long userId);
+
     @Query("select l.post.id from PostLike l where l.user.id = :userId and l.post.id in :postIds")
     Set<Long> findLikedPostIds(Long userId, Collection<Long> postIds);
 

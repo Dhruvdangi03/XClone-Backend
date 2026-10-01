@@ -17,10 +17,13 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByEmail(String email);
 
+    boolean existsByIdAndStatus(Long id, AccountStatus status);
+
     /** {@code prefix} must already be lowercased, LIKE-escaped and end with {@code %}. */
     @Query("""
             select u from User u
-            where u.username like :prefix escape '\\' or lower(u.displayName) like :prefix escape '\\'
+            where (u.username like :prefix escape '\\' or lower(u.displayName) like :prefix escape '\\')
+              and u.status <> com.project.Xclone_backend.user.AccountStatus.DELETED
             order by u.username
             """)
     List<User> search(String prefix, Limit limit);
