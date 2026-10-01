@@ -2,6 +2,7 @@ package com.project.Xclone_backend.post;
 
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
@@ -9,6 +10,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.project.Xclone_backend.common.ApiException;
 import com.project.Xclone_backend.common.CursorPage;
+import com.project.Xclone_backend.hashtag.Hashtag;
+import com.project.Xclone_backend.hashtag.HashtagService;
 import com.project.Xclone_backend.like.LikeRepository;
 import com.project.Xclone_backend.like.PostLike;
 import com.project.Xclone_backend.media.MediaService;
@@ -32,6 +35,7 @@ public class PostService {
     private final PostMapper postMapper;
     private final UserMapper userMapper;
     private final MediaService mediaService;
+    private final HashtagService hashtagService;
 
     @Transactional
     public PostResponse create(Long authorId, CreatePostRequest req) {
@@ -46,6 +50,7 @@ public class PostService {
         post.setAuthor(userService.requireById(authorId));
         post.setContent(content);
         mediaKeys.forEach(post::addMedia);
+        syncHashtags(post);
 
         if (req.replyToId() != null) {
             Post parent = requireLive(req.replyToId());
@@ -71,6 +76,7 @@ public class PostService {
             throw ApiException.forbidden("You can only edit your own posts");
         }
         post.setContent(req.content().strip());
+        syncHashtags(post);
         return postMapper.toResponse(post, userId);
     }
 
@@ -152,6 +158,14 @@ public class PostService {
     }
 
     @Transactional(readOnly = true)
+    public CursorPage<PostResponse> hashtagPosts(String name, Long viewerId, Long cursor, Integer limit) {
+        int n = CursorPage.clampLimit(limit);
+        List<Post> rows = postRepository.findByHashtag(HashtagService.normalize(name), CursorPage.cursorOrMax(cursor),
+                Limit.of(n + 1));
+        return CursorPage.of(rows, n, Post::getId, page -> postMapper.toResponses(page, viewerId));
+    }
+
+    @Transactional(readOnly = true)
     public CursorPage<PostResponse> timeline(Long userId, Long cursor, Integer limit) {
         int n = CursorPage.clampLimit(limit);
         List<Post> rows = postRepository.findTimeline(userId, CursorPage.cursorOrMax(cursor), Limit.of(n + 1));
@@ -162,6 +176,13 @@ public class PostService {
         if (viewerId != null) {
             userService.requireNotBlocked(viewerId, user.getId());
         }
+    }
+  
+    /** Retain-then-add so Hibernate only writes the link rows that actually changed. */
+    private void syncHashtags(Post post) {
+        Set<Hashtag> tags = hashtagService.resolve(post.getContent());
+        post.getHashtags().retainAll(tags);
+        post.getHashtags().addAll(tags);
     }
 
     private Post requireLive(Long postId) {

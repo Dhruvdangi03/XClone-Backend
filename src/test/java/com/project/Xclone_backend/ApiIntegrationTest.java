@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import com.jayway.jsonpath.JsonPath;
+import com.project.Xclone_backend.hashtag.HashtagRepository;
 
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
@@ -38,6 +40,9 @@ class ApiIntegrationTest {
 
     @Autowired
     MockMvc mvc;
+
+    @Autowired
+    HashtagRepository hashtagRepository;
 
     @MockitoBean
     S3Client s3Client;
@@ -179,6 +184,58 @@ class ApiIntegrationTest {
         mvc.perform(auth(delete("/api/posts/" + postId), alice)).andExpect(status().isNoContent());
         mvc.perform(json(auth(patch("/api/posts/" + postId), alice), "{\"content\":\"x\"}"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void hashtags() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        // Unique per run so tags don't collide with posts from other tests.
+        String t = "t" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+
+        long postId = createPost(alice, "{\"content\":\"Learning #Java" + t + " #Spring" + t + " #JAVA" + t + "\"}");
+        long otherId = createPost(bob, "{\"content\":\"#java" + t + " too\"}");
+
+        // Case-insensitive lookup; a repeated tag links the post only once.
+        mvc.perform(get("/api/hashtags/JAVA" + t + "/posts"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[*].id", contains((int) otherId, (int) postId)));
+        mvc.perform(get("/api/hashtags/{name}/posts", "#Spring" + t))
+                .andExpect(jsonPath("$.items[*].id", contains((int) postId)));
+        org.assertj.core.api.Assertions.assertThat(
+                hashtagRepository.findByNameIn(List.of("java" + t, "spring" + t))).hasSize(2);
+
+        // Keyset paging.
+        mvc.perform(get("/api/hashtags/java" + t + "/posts").param("limit", "1"))
+                .andExpect(jsonPath("$.items", hasSize(1)))
+                .andExpect(jsonPath("$.nextCursor").value(otherId));
+
+        // Editing re-syncs tags: adding keeps old ones, replacing drops them.
+        mvc.perform(json(auth(patch("/api/posts/" + postId), alice),
+                        "{\"content\":\"Learning #Java" + t + " and #Boot" + t + "\"}"))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/hashtags/java" + t + "/posts"))
+                .andExpect(jsonPath("$.items[*].id", contains((int) otherId, (int) postId)));
+        mvc.perform(get("/api/hashtags/boot" + t + "/posts"))
+                .andExpect(jsonPath("$.items[*].id", contains((int) postId)));
+        mvc.perform(get("/api/hashtags/spring" + t + "/posts")).andExpect(jsonPath("$.items", hasSize(0)));
+
+        mvc.perform(json(auth(patch("/api/posts/" + postId), alice), "{\"content\":\"Learning #React" + t + "\"}"))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/hashtags/java" + t + "/posts"))
+                .andExpect(jsonPath("$.items[*].id", contains((int) otherId)));
+        mvc.perform(get("/api/hashtags/boot" + t + "/posts")).andExpect(jsonPath("$.items", hasSize(0)));
+        mvc.perform(get("/api/hashtags/react" + t + "/posts"))
+                .andExpect(jsonPath("$.items[*].id", contains((int) postId)))
+                .andExpect(jsonPath("$.items[0].author.username").value(alice.username()));
+
+        // Deleted posts drop out; unknown tags give an empty page.
+        mvc.perform(auth(delete("/api/posts/" + postId), alice)).andExpect(status().isNoContent());
+        mvc.perform(get("/api/hashtags/react" + t + "/posts")).andExpect(jsonPath("$.items", hasSize(0)));
+        mvc.perform(get("/api/hashtags/nothing" + t + "/posts"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items", hasSize(0)))
+                .andExpect(jsonPath("$.nextCursor").value(nullValue()));
     }
 
     @Test
