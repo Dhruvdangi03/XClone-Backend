@@ -27,6 +27,8 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 
 import com.jayway.jsonpath.JsonPath;
 import com.project.Xclone_backend.hashtag.HashtagRepository;
+import com.project.Xclone_backend.report.PostReportRepository;
+import com.project.Xclone_backend.report.UserReportRepository;
 
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
@@ -43,6 +45,12 @@ class ApiIntegrationTest {
 
     @Autowired
     HashtagRepository hashtagRepository;
+
+    @Autowired
+    UserReportRepository userReportRepository;
+
+    @Autowired
+    PostReportRepository postReportRepository;
 
     @MockitoBean
     S3Client s3Client;
@@ -236,6 +244,64 @@ class ApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items", hasSize(0)))
                 .andExpect(jsonPath("$.nextCursor").value(nullValue()));
+    }
+
+    @Test
+    void reportUser() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        Account carol = register();
+        String url = "/api/users/" + bob.username() + "/report";
+
+        mvc.perform(json(post(url), "{\"reason\":\"SPAM\"}")).andExpect(status().isUnauthorized());
+        mvc.perform(json(auth(post(url), alice), "{}")).andExpect(status().isBadRequest());
+        mvc.perform(json(auth(post(url), alice), "{\"reason\":\"FOO\"}")).andExpect(status().isBadRequest());
+        mvc.perform(json(auth(post("/api/users/nobody_" + UUID.randomUUID().toString().substring(0, 8) + "/report"),
+                        alice), "{\"reason\":\"SPAM\"}"))
+                .andExpect(status().isNotFound());
+        mvc.perform(json(auth(post("/api/users/" + alice.username() + "/report"), alice), "{\"reason\":\"SPAM\"}"))
+                .andExpect(status().isBadRequest());
+
+        mvc.perform(json(auth(post(url), alice), "{\"reason\":\"HARASSMENT\"}")).andExpect(status().isNoContent());
+        org.assertj.core.api.Assertions.assertThat(
+                userReportRepository.existsByReporterIdAndReportedUserId(alice.id(), bob.id())).isTrue();
+        mvc.perform(json(auth(post(url), alice), "{\"reason\":\"SPAM\"}")).andExpect(status().isConflict());
+        mvc.perform(json(auth(post(url), carol), "{\"reason\":\"OTHER\"}")).andExpect(status().isNoContent());
+
+        // Reporting does not affect the reported account.
+        mvc.perform(get("/api/users/" + bob.username())).andExpect(status().isOk());
+        mvc.perform(auth(get("/api/users/me"), bob)).andExpect(status().isOk());
+    }
+
+    @Test
+    void reportPost() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        Account carol = register();
+        long postId = createPost(alice, "{\"content\":\"reportable\"}");
+        String url = "/api/posts/" + postId + "/report";
+
+        mvc.perform(json(post(url), "{\"reason\":\"SPAM\"}")).andExpect(status().isUnauthorized());
+        mvc.perform(json(auth(post(url), bob), "{}")).andExpect(status().isBadRequest());
+        mvc.perform(json(auth(post(url), bob), "{\"reason\":\"spam\"}")).andExpect(status().isBadRequest());
+        mvc.perform(json(auth(post("/api/posts/999999999/report"), bob), "{\"reason\":\"SPAM\"}"))
+                .andExpect(status().isNotFound());
+        mvc.perform(json(auth(post(url), alice), "{\"reason\":\"SPAM\"}")).andExpect(status().isBadRequest());
+
+        mvc.perform(json(auth(post(url), bob), "{\"reason\":\"MISINFORMATION\"}")).andExpect(status().isNoContent());
+        org.assertj.core.api.Assertions.assertThat(
+                postReportRepository.existsByReporterIdAndPostId(bob.id(), postId)).isTrue();
+        mvc.perform(json(auth(post(url), bob), "{\"reason\":\"SPAM\"}")).andExpect(status().isConflict());
+        mvc.perform(json(auth(post(url), carol), "{\"reason\":\"OTHER\"}")).andExpect(status().isNoContent());
+
+        // Reporting does not hide or change the post.
+        mvc.perform(get("/api/posts/" + postId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content").value("reportable"));
+
+        // Deleted posts can no longer be reported.
+        mvc.perform(auth(delete("/api/posts/" + postId), alice)).andExpect(status().isNoContent());
+        mvc.perform(json(auth(post(url), register()), "{\"reason\":\"SPAM\"}")).andExpect(status().isNotFound());
     }
 
     @Test

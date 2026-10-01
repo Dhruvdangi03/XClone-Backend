@@ -18,6 +18,8 @@ import com.project.Xclone_backend.media.MediaService;
 import com.project.Xclone_backend.post.PostDtos.CreatePostRequest;
 import com.project.Xclone_backend.post.PostDtos.PostResponse;
 import com.project.Xclone_backend.post.PostDtos.UpdatePostRequest;
+import com.project.Xclone_backend.report.PostReportRepository;
+import com.project.Xclone_backend.report.ReportReason;
 import com.project.Xclone_backend.user.User;
 import com.project.Xclone_backend.user.UserDtos.UserSummary;
 import com.project.Xclone_backend.user.UserMapper;
@@ -36,6 +38,7 @@ public class PostService {
     private final UserMapper userMapper;
     private final MediaService mediaService;
     private final HashtagService hashtagService;
+    private final PostReportRepository postReportRepository;
 
     @Transactional
     public PostResponse create(Long authorId, CreatePostRequest req) {
@@ -86,6 +89,18 @@ public class PostService {
         post.setDeleted(true);
         if (post.getParent() != null) {
             postRepository.addToReplyCount(post.getParent().getId(), -1);
+        }
+    }
+
+    /** Only records the report; the reported post is not changed in any way. */
+    @Transactional
+    public void report(Long postId, Long reporterId, ReportReason reason) {
+        Post post = requireLive(postId);
+        if (post.getAuthor().getId().equals(reporterId)) {
+            throw ApiException.badRequest("You cannot report your own post");
+        }
+        if (postReportRepository.report(reporterId, postId, reason.name()) == 0) {
+            throw ApiException.conflict("You have already reported this post");
         }
     }
 

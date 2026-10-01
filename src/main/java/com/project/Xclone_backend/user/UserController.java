@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.project.Xclone_backend.common.CursorPage;
+import com.project.Xclone_backend.report.ReportDtos.ReportRequest;
 import com.project.Xclone_backend.security.AuthUser;
 import com.project.Xclone_backend.user.UserDtos.ProfileResponse;
 import com.project.Xclone_backend.user.UserDtos.UpdateProfileRequest;
@@ -62,6 +63,13 @@ public class UserController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void unfollow(@PathVariable String username, @AuthenticationPrincipal AuthUser me) {
         userService.unfollow(me.id(), username);
+    }
+
+    @PostMapping("/{username}/report")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void report(@PathVariable String username, @AuthenticationPrincipal AuthUser me,
+            @Valid @RequestBody ReportRequest req) {
+        userService.report(me.id(), username, req.reason());
     }
 
     @GetMapping("/{username}/followers")
