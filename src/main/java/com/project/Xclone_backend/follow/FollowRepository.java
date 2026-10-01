@@ -32,15 +32,23 @@ public interface FollowRepository extends JpaRepository<Follow, Long> {
 
     @Query("""
             select f from Follow f join fetch f.follower
-            where f.followee.id = :userId and f.id < :cursor order by f.id desc
+            where f.followee.id = :userId and f.id < :cursor
+              and (:viewerId is null or not exists (select 1 from Block b
+                   where (b.blocker.id = :viewerId and b.blocked.id = f.follower.id)
+                      or (b.blocker.id = f.follower.id and b.blocked.id = :viewerId)))
+            order by f.id desc
             """)
-    List<Follow> findFollowers(Long userId, long cursor, Limit limit);
+    List<Follow> findFollowers(Long userId, Long viewerId, long cursor, Limit limit);
 
     @Query("""
             select f from Follow f join fetch f.followee
-            where f.follower.id = :userId and f.id < :cursor order by f.id desc
+            where f.follower.id = :userId and f.id < :cursor
+              and (:viewerId is null or not exists (select 1 from Block b
+                   where (b.blocker.id = :viewerId and b.blocked.id = f.followee.id)
+                      or (b.blocker.id = f.followee.id and b.blocked.id = :viewerId)))
+            order by f.id desc
             """)
-    List<Follow> findFollowing(Long userId, long cursor, Limit limit);
+    List<Follow> findFollowing(Long userId, Long viewerId, long cursor, Limit limit);
 
     @Query("select f.followee.id from Follow f where f.follower.id = :followerId and f.followee.id in :ids")
     Set<Long> findFolloweeIdsAmong(Long followerId, Collection<Long> ids);

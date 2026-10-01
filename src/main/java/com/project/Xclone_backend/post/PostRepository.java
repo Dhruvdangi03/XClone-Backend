@@ -29,13 +29,16 @@ public interface PostRepository extends JpaRepository<Post, Long> {
             """)
     List<Post> findUserReplies(Long authorId, long cursor, Limit limit);
 
-    /** Direct replies to a post, oldest first so a thread reads top to bottom. */
+    /** Direct replies to a post, oldest first so a thread reads top to bottom. Skips viewer-blocked authors. */
     @Query("""
             select p from Post p join fetch p.author
             where p.parent.id = :parentId and p.deleted = false and p.id > :cursor
+              and (:viewerId is null or not exists (select 1 from Block b
+                   where (b.blocker.id = :viewerId and b.blocked.id = p.author.id)
+                      or (b.blocker.id = p.author.id and b.blocked.id = :viewerId)))
             order by p.id asc
             """)
-    List<Post> findReplies(Long parentId, long cursor, Limit limit);
+    List<Post> findReplies(Long parentId, Long viewerId, long cursor, Limit limit);
 
     /** Posts and replies tagged with a normalized hashtag name, newest first. */
     @Query("""

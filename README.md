@@ -2,7 +2,7 @@
 
 A minimal X (Twitter) clone REST API built with Spring Boot 4, PostgreSQL, and Cloudflare R2 for images.
 
-Features: JWT auth (access + rotating refresh tokens), profiles, posts with up to 4 images, replies, likes, follows, a home timeline, and user search.
+Features: JWT auth (access + rotating refresh tokens), profiles, posts with up to 4 images, replies, likes, follows, blocking, a home timeline, and user search.
 
 ## Running locally
 
@@ -50,8 +50,10 @@ All endpoints are under `/api`. Send `Authorization: Bearer <accessToken>` for a
 | POST | `/auth/logout` | – | `{refreshToken}` |
 | GET / PATCH | `/users/me` | ✓ | PATCH `{displayName?, bio?, avatarKey?, bannerKey?}`; `""` clears |
 | GET | `/users/search?q=` | – | prefix match on username / display name |
-| GET | `/users/{username}` | optional | profile + counts + `followedByMe` |
+| GET | `/users/me/blocks` | ✓ | users you blocked, paged |
+| GET | `/users/{username}` | optional | profile + counts + `followedByMe` + `blockedByMe` |
 | POST / DELETE | `/users/{username}/follow` | ✓ | idempotent |
+| POST / DELETE | `/users/{username}/block` | ✓ | idempotent; removes follows both ways. Blocked pairs can't follow, like or reply to each other or see each other's posts (403), and are hidden from each other's reply and follower lists |
 | GET | `/users/{username}/followers`, `/following` | – | paged |
 | GET | `/users/{username}/posts`, `/replies`, `/likes` | optional | paged |
 | POST | `/posts` | ✓ | `{content?, mediaKeys?, replyToId?}` |
