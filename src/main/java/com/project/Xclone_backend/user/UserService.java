@@ -14,6 +14,8 @@ import com.project.Xclone_backend.common.CursorPage;
 import com.project.Xclone_backend.follow.Follow;
 import com.project.Xclone_backend.follow.FollowRepository;
 import com.project.Xclone_backend.media.MediaService;
+import com.project.Xclone_backend.report.ReportReason;
+import com.project.Xclone_backend.report.UserReportRepository;
 import com.project.Xclone_backend.user.UserDtos.ProfileResponse;
 import com.project.Xclone_backend.user.UserDtos.UpdateProfileRequest;
 import com.project.Xclone_backend.user.UserDtos.UserResponse;
@@ -32,6 +34,7 @@ public class UserService {
     private final BlockRepository blockRepository;
     private final UserMapper userMapper;
     private final MediaService mediaService;
+    private final UserReportRepository userReportRepository;
 
     public User requireByUsername(String username) {
         return userRepository.findByUsername(username.toLowerCase(Locale.ROOT))
@@ -105,6 +108,18 @@ public class UserService {
         }
         requireNotBlocked(followerId, target.getId());
         followRepository.follow(followerId, target.getId());
+    }
+
+    /** Only records the report; the reported user is not changed in any way. */
+    @Transactional
+    public void report(Long reporterId, String username, ReportReason reason) {
+        User target = requireByUsername(username);
+        if (target.getId().equals(reporterId)) {
+            throw ApiException.badRequest("You cannot report yourself");
+        }
+        if (userReportRepository.report(reporterId, target.getId(), reason.name()) == 0) {
+            throw ApiException.conflict("You have already reported this user");
+        }
     }
 
     @Transactional

@@ -17,6 +17,7 @@ import com.project.Xclone_backend.common.CursorPage;
 import com.project.Xclone_backend.post.PostDtos.CreatePostRequest;
 import com.project.Xclone_backend.post.PostDtos.PostResponse;
 import com.project.Xclone_backend.post.PostDtos.UpdatePostRequest;
+import com.project.Xclone_backend.report.ReportDtos.ReportRequest;
 import com.project.Xclone_backend.security.AuthUser;
 import com.project.Xclone_backend.user.UserDtos.UserSummary;
 
@@ -57,6 +58,13 @@ public class PostController {
     public CursorPage<PostResponse> replies(@PathVariable Long id, @AuthenticationPrincipal AuthUser me,
             @RequestParam(required = false) Long cursor, @RequestParam(required = false) Integer limit) {
         return postService.replies(id, idOf(me), cursor, limit);
+    }
+
+    @PostMapping("/posts/{id}/report")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void report(@PathVariable Long id, @AuthenticationPrincipal AuthUser me,
+            @Valid @RequestBody ReportRequest req) {
+        postService.report(id, me.id(), req.reason());
     }
 
     @PostMapping("/posts/{id}/like")
