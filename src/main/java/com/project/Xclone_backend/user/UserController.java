@@ -42,6 +42,12 @@ public class UserController {
         return userService.updateProfile(me.id(), req);
     }
 
+    @GetMapping("/me/blocks")
+    public CursorPage<UserSummary> blocked(@AuthenticationPrincipal AuthUser me,
+            @RequestParam(required = false) Long cursor, @RequestParam(required = false) Integer limit) {
+        return userService.blocked(me.id(), cursor, limit);
+    }
+
     @GetMapping("/search")
     public List<UserSummary> search(@RequestParam(name = "q", required = false) String q) {
         return userService.search(q);
@@ -64,15 +70,27 @@ public class UserController {
         userService.unfollow(me.id(), username);
     }
 
+    @PostMapping("/{username}/block")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void block(@PathVariable String username, @AuthenticationPrincipal AuthUser me) {
+        userService.block(me.id(), username);
+    }
+
+    @DeleteMapping("/{username}/block")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void unblock(@PathVariable String username, @AuthenticationPrincipal AuthUser me) {
+        userService.unblock(me.id(), username);
+    }
+
     @GetMapping("/{username}/followers")
-    public CursorPage<UserSummary> followers(@PathVariable String username,
+    public CursorPage<UserSummary> followers(@PathVariable String username, @AuthenticationPrincipal AuthUser me,
             @RequestParam(required = false) Long cursor, @RequestParam(required = false) Integer limit) {
-        return userService.followers(username, cursor, limit);
+        return userService.followers(username, me == null ? null : me.id(), cursor, limit);
     }
 
     @GetMapping("/{username}/following")
-    public CursorPage<UserSummary> following(@PathVariable String username,
+    public CursorPage<UserSummary> following(@PathVariable String username, @AuthenticationPrincipal AuthUser me,
             @RequestParam(required = false) Long cursor, @RequestParam(required = false) Integer limit) {
-        return userService.following(username, cursor, limit);
+        return userService.following(username, me == null ? null : me.id(), cursor, limit);
     }
 }

@@ -49,6 +49,7 @@ public class PostService {
 
         if (req.replyToId() != null) {
             Post parent = requireLive(req.replyToId());
+            userService.requireNotBlocked(authorId, parent.getAuthor().getId());
             post.setParent(parent);
             postRepository.addToReplyCount(parent.getId(), 1);
         }
@@ -58,7 +59,9 @@ public class PostService {
 
     @Transactional(readOnly = true)
     public PostResponse get(Long postId, Long viewerId) {
-        return postMapper.toResponse(requireLive(postId), viewerId);
+        Post post = requireLive(postId);
+        requireVisible(viewerId, post.getAuthor());
+        return postMapper.toResponse(post, viewerId);
     }
 
     @Transactional
@@ -85,7 +88,8 @@ public class PostService {
 
     @Transactional
     public void like(Long postId, Long userId) {
-        requireLive(postId);
+        Post post = requireLive(postId);
+        userService.requireNotBlocked(userId, post.getAuthor().getId());
         if (likeRepository.like(userId, postId) > 0) {
             postRepository.addToLikeCount(postId, 1);
         }
@@ -103,7 +107,8 @@ public class PostService {
     public CursorPage<PostResponse> replies(Long postId, Long viewerId, Long cursor, Integer limit) {
         requireLive(postId);
         int n = CursorPage.clampLimit(limit);
-        List<Post> rows = postRepository.findReplies(postId, cursor == null ? 0L : cursor, Limit.of(n + 1));
+        List<Post> rows = postRepository.findReplies(postId, viewerId, cursor == null ? 0L : cursor,
+                Limit.of(n + 1));
         return CursorPage.of(rows, n, Post::getId, page -> postMapper.toResponses(page, viewerId));
     }
 
@@ -119,6 +124,7 @@ public class PostService {
     @Transactional(readOnly = true)
     public CursorPage<PostResponse> userPosts(String username, Long viewerId, Long cursor, Integer limit) {
         User user = userService.requireByUsername(username);
+        requireVisible(viewerId, user);
         int n = CursorPage.clampLimit(limit);
         List<Post> rows = postRepository.findUserPosts(user.getId(), CursorPage.cursorOrMax(cursor), Limit.of(n + 1));
         return CursorPage.of(rows, n, Post::getId, page -> postMapper.toResponses(page, viewerId));
@@ -127,6 +133,7 @@ public class PostService {
     @Transactional(readOnly = true)
     public CursorPage<PostResponse> userReplies(String username, Long viewerId, Long cursor, Integer limit) {
         User user = userService.requireByUsername(username);
+        requireVisible(viewerId, user);
         int n = CursorPage.clampLimit(limit);
         List<Post> rows = postRepository.findUserReplies(user.getId(), CursorPage.cursorOrMax(cursor), Limit.of(n + 1));
         return CursorPage.of(rows, n, Post::getId, page -> postMapper.toResponses(page, viewerId));
@@ -136,8 +143,10 @@ public class PostService {
     @Transactional(readOnly = true)
     public CursorPage<PostResponse> userLikes(String username, Long viewerId, Long cursor, Integer limit) {
         User user = userService.requireByUsername(username);
+        requireVisible(viewerId, user);
         int n = CursorPage.clampLimit(limit);
-        List<PostLike> rows = likeRepository.findUserLikes(user.getId(), CursorPage.cursorOrMax(cursor), Limit.of(n + 1));
+        List<PostLike> rows = likeRepository.findUserLikes(user.getId(), viewerId, CursorPage.cursorOrMax(cursor),
+                Limit.of(n + 1));
         return CursorPage.of(rows, n, PostLike::getId,
                 page -> postMapper.toResponses(page.stream().map(PostLike::getPost).toList(), viewerId));
     }
@@ -147,6 +156,12 @@ public class PostService {
         int n = CursorPage.clampLimit(limit);
         List<Post> rows = postRepository.findTimeline(userId, CursorPage.cursorOrMax(cursor), Limit.of(n + 1));
         return CursorPage.of(rows, n, Post::getId, page -> postMapper.toResponses(page, userId));
+    }
+
+    private void requireVisible(Long viewerId, User user) {
+        if (viewerId != null) {
+            userService.requireNotBlocked(viewerId, user.getId());
+        }
     }
 
     private Post requireLive(Long postId) {
