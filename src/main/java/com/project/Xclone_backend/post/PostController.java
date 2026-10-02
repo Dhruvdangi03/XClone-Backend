@@ -37,6 +37,13 @@ public class PostController {
         return postService.create(me.id(), req);
     }
 
+    @GetMapping("/posts/search")
+    public CursorPage<PostResponse> search(@RequestParam(required = false) String q,
+            @AuthenticationPrincipal AuthUser me, @RequestParam(required = false) Long cursor,
+            @RequestParam(required = false) Integer limit) {
+        return postService.search(q, idOf(me), cursor, limit);
+    }
+
     @GetMapping("/posts/{id}")
     public PostResponse get(@PathVariable Long id, @AuthenticationPrincipal AuthUser me) {
         return postService.get(id, idOf(me));

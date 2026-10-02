@@ -251,6 +251,60 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void postSearch() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        String t = "s" + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+
+        long first = createPost(alice, "{\"content\":\"Hello Wide " + t.toUpperCase() + " world\"}");
+        long second = createPost(bob, "{\"content\":\"another " + t + " post\"}");
+        createPost(alice, "{\"content\":\"unrelated text\"}");
+
+        // Matches are case-insensitive in both directions, newest first, and need no login.
+        mvc.perform(get("/api/posts/search").param("q", t))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[*].id", contains((int) second, (int) first)))
+                .andExpect(jsonPath("$.nextCursor").value(nullValue()));
+        mvc.perform(get("/api/posts/search").param("q", "  " + t.toUpperCase() + "  "))
+                .andExpect(jsonPath("$.items[*].id", contains((int) second, (int) first)));
+
+        // LIKE wildcards in the query are literal.
+        mvc.perform(get("/api/posts/search").param("q", "%%"))
+                .andExpect(jsonPath("$.items", hasSize(0)));
+        mvc.perform(get("/api/posts/search").param("q", "__"))
+                .andExpect(jsonPath("$.items", hasSize(0)));
+
+        // Keyset paging.
+        mvc.perform(get("/api/posts/search").param("q", t).param("limit", "1"))
+                .andExpect(jsonPath("$.items[*].id", contains((int) second)))
+                .andExpect(jsonPath("$.nextCursor").value(second));
+        mvc.perform(get("/api/posts/search").param("q", t).param("limit", "1").param("cursor", String.valueOf(second)))
+                .andExpect(jsonPath("$.items[*].id", contains((int) first)))
+                .andExpect(jsonPath("$.nextCursor").value(nullValue()));
+
+        // Blocking hides the blocked author's posts from the blocker (and vice versa), but not from anonymous users.
+        mvc.perform(auth(post("/api/users/" + bob.username() + "/block"), alice)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/posts/search").param("q", t), alice))
+                .andExpect(jsonPath("$.items[*].id", contains((int) first)));
+        mvc.perform(auth(get("/api/posts/search").param("q", t), bob))
+                .andExpect(jsonPath("$.items[*].id", contains((int) second)));
+        mvc.perform(get("/api/posts/search").param("q", t))
+                .andExpect(jsonPath("$.items", hasSize(2)));
+
+        // Deleted posts drop out.
+        mvc.perform(auth(delete("/api/posts/" + first), alice)).andExpect(status().isNoContent());
+        mvc.perform(get("/api/posts/search").param("q", t))
+                .andExpect(jsonPath("$.items[*].id", contains((int) second)));
+
+        // Empty, too short and too long queries are rejected.
+        mvc.perform(get("/api/posts/search")).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/posts/search").param("q", "")).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/posts/search").param("q", "   ")).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/posts/search").param("q", "a")).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/posts/search").param("q", "a".repeat(101))).andExpect(status().isBadRequest());
+    }
+
+    @Test
     void reportUser() throws Exception {
         Account alice = register();
         Account bob = register();

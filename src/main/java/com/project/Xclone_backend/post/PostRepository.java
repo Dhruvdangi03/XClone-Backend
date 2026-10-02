@@ -56,6 +56,21 @@ public interface PostRepository extends JpaRepository<Post, Long> {
             """)
     List<Post> findByHashtag(String name, long cursor, Limit limit);
 
+    /**
+     * Posts and replies whose text contains the (already lower-cased, LIKE-escaped) pattern, newest first.
+     * Skips authors who block or are blocked by the viewer.
+     */
+    @Query("""
+            select p from Post p join fetch p.author
+            where lower(p.content) like :pattern escape '\\' and p.deleted = false and p.repostOf is null
+              and p.id < :cursor
+              and (:viewerId is null or not exists (select 1 from Block b
+                   where (b.blocker.id = :viewerId and b.blocked.id = p.author.id)
+                      or (b.blocker.id = p.author.id and b.blocked.id = :viewerId)))
+            order by p.id desc
+            """)
+    List<Post> searchByContent(String pattern, Long viewerId, long cursor, Limit limit);
+
     /** Home timeline: top-level posts and reposts by the user and everyone they follow, newest first. */
     @Query("""
             select p from Post p join fetch p.author left join fetch p.repostOf o left join fetch o.author
