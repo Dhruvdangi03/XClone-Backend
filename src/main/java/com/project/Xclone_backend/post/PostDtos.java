@@ -33,6 +33,6 @@ public final class PostDtos {
     public record PostResponse(Long id, UserSummary author, String content, List<String> mediaUrls,
             Long replyToId, int likeCount, int replyCount, boolean likedByMe, Instant createdAt,
             int repostCount, boolean repostedByMe, UserSummary repostedBy,
-            PostResponse quotedPost) {
+            PostResponse quotedPost, List<UserSummary> mentions) {
     }
 }

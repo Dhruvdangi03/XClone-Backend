@@ -17,6 +17,7 @@ import com.project.Xclone_backend.hashtag.HashtagService;
 import com.project.Xclone_backend.like.LikeRepository;
 import com.project.Xclone_backend.like.PostLike;
 import com.project.Xclone_backend.media.MediaService;
+import com.project.Xclone_backend.mention.MentionService;
 import com.project.Xclone_backend.post.PostDtos.CreatePostRequest;
 import com.project.Xclone_backend.post.PostDtos.PostResponse;
 import com.project.Xclone_backend.post.PostDtos.UpdatePostRequest;
@@ -42,6 +43,7 @@ public class PostService {
     private final HashtagService hashtagService;
     private final PostReportRepository postReportRepository;
     private final BookmarkRepository bookmarkRepository;
+    private final MentionService mentionService;
 
     @Transactional
     public PostResponse create(Long authorId, CreatePostRequest req) {
@@ -57,6 +59,7 @@ public class PostService {
         post.setContent(content);
         mediaKeys.forEach(post::addMedia);
         syncHashtags(post);
+        syncMentions(post);
 
         if (req.quotedPostId() != null) {
             if (req.replyToId() != null) {
@@ -86,6 +89,7 @@ public class PostService {
         }
         post.setContent(req.content().strip());
         syncHashtags(post);
+        syncMentions(post);
         return postMapper.toResponse(post, userId);
     }
 
@@ -96,6 +100,7 @@ public class PostService {
             throw ApiException.forbidden("You can only delete your own posts");
         }
         post.setDeleted(true);
+        post.getMentions().clear();
         if (post.getParent() != null) {
             postRepository.addToReplyCount(post.getParent().getId(), -1);
         }
@@ -234,6 +239,12 @@ public class PostService {
         Set<Hashtag> tags = hashtagService.resolve(post.getContent());
         post.getHashtags().retainAll(tags);
         post.getHashtags().addAll(tags);
+    }
+
+    private void syncMentions(Post post) {
+        Set<User> users = mentionService.resolve(post.getContent());
+        post.getMentions().retainAll(users);
+        post.getMentions().addAll(users);
     }
 
     private Post requireLive(Long postId) {

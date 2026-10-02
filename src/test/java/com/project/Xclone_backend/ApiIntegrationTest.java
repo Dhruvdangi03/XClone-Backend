@@ -747,6 +747,71 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void mentions() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        Account carol = register();
+        Account author = register();
+
+        // Valid, multiple and duplicate mentions (case-insensitive) are stored once each.
+        String body = "{\"content\":\"hey @" + bob.username().toUpperCase() + " and @" + carol.username() + " again @"
+                + bob.username() + "\"}";
+        String res = mvc.perform(json(auth(post("/api/posts"), author), body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.mentions", hasSize(2)))
+                .andReturn().getResponse().getContentAsString();
+        long postId = ((Number) JsonPath.read(res, "$.id")).longValue();
+        org.assertj.core.api.Assertions.assertThat(mentionedIds(postId)).containsExactlyInAnyOrder(bob.id(), carol.id());
+        mvc.perform(get("/api/posts/" + postId))
+                .andExpect(jsonPath("$.mentions[*].id", org.hamcrest.Matchers.containsInAnyOrder(
+                        (int) bob.id(), (int) carol.id())));
+
+        // Nonexistent users, emails and over-long handles are plain text: the post is created, nothing is linked.
+        long plain = createPost(author, "{\"content\":\"@nobody_" + UUID.randomUUID().toString().substring(0, 6)
+                + " mail x@" + alice.username() + ".com @thisnameiswaytoolong\"}");
+        org.assertj.core.api.Assertions.assertThat(mentionedIds(plain)).isEmpty();
+
+        // A mention of someone who exists mixed with one who doesn't only links the one who exists.
+        long mixed = createPost(author, "{\"content\":\"@" + alice.username() + " @ghost_user_zz\"}");
+        org.assertj.core.api.Assertions.assertThat(mentionedIds(mixed)).containsExactly(alice.id());
+
+        // Deactivated users cannot be mentioned.
+        mvc.perform(auth(post("/api/users/me/deactivate"), carol)).andExpect(status().isNoContent());
+        long toDeactivated = createPost(author, "{\"content\":\"@" + carol.username() + "\"}");
+        org.assertj.core.api.Assertions.assertThat(mentionedIds(toDeactivated)).isEmpty();
+
+        // Editing re-syncs: keep one, drop one, add one.
+        mvc.perform(json(auth(patch("/api/posts/" + postId), author),
+                        "{\"content\":\"now only @" + bob.username() + " and @" + alice.username() + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mentions", hasSize(2)));
+        org.assertj.core.api.Assertions.assertThat(mentionedIds(postId)).containsExactlyInAnyOrder(bob.id(), alice.id());
+        mvc.perform(json(auth(patch("/api/posts/" + postId), author), "{\"content\":\"no mentions now\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mentions", hasSize(0)));
+        org.assertj.core.api.Assertions.assertThat(mentionedIds(postId)).isEmpty();
+
+        // Deleting the post removes its mention rows.
+        mvc.perform(json(auth(patch("/api/posts/" + postId), author), "{\"content\":\"back @" + bob.username() + "\"}"))
+                .andExpect(status().isOk());
+        org.assertj.core.api.Assertions.assertThat(mentionedIds(postId)).containsExactly(bob.id());
+        mvc.perform(auth(delete("/api/posts/" + postId), author)).andExpect(status().isNoContent());
+        org.assertj.core.api.Assertions.assertThat(mentionedIds(postId)).isEmpty();
+
+        // Mentions also work in replies, and deleting the mentioned user's account removes the link.
+        long reply = createPost(alice, "{\"content\":\"@" + bob.username() + " thanks\",\"replyToId\":" + mixed + "}");
+        org.assertj.core.api.Assertions.assertThat(mentionedIds(reply)).containsExactly(bob.id());
+        mvc.perform(json(auth(delete("/api/users/me"), bob), "{\"password\":\"password123\"}"))
+                .andExpect(status().isNoContent());
+        org.assertj.core.api.Assertions.assertThat(mentionedIds(reply)).isEmpty();
+        mvc.perform(get("/api/posts/" + reply)).andExpect(jsonPath("$.mentions", hasSize(0)));
+    }
+
+    private List<Long> mentionedIds(long postId) {
+        return jdbc.queryForList("select user_id from post_mentions where post_id = ?", Long.class, postId);
+    }
+
+    @Test
     void followAndTimelinePaging() throws Exception {
         Account alice = register();
         Account bob = register();

@@ -112,6 +112,18 @@ public class Post {
             indexes = @Index(name = "idx_post_hashtags_hashtag", columnList = "hashtag_id, post_id"))
     private Set<Hashtag> hashtags = new HashSet<>();
 
+    /**
+     * Active users @mentioned in the content; kept in sync by PostService on create and edit, and cleared on delete.
+     * Notifications can later be driven from this relationship.
+     */
+    @ManyToMany
+    @JoinTable(name = "post_mentions",
+            joinColumns = @JoinColumn(name = "post_id"),
+            inverseJoinColumns = @JoinColumn(name = "user_id"),
+            indexes = @Index(name = "idx_post_mentions_user", columnList = "user_id, post_id"))
+    @BatchSize(size = 50)
+    private Set<User> mentions = new HashSet<>();
+
     public void addMedia(String r2Key) {
         PostMedia m = new PostMedia();
         m.setPost(this);

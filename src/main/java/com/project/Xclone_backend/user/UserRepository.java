@@ -1,5 +1,6 @@
 package com.project.Xclone_backend.user;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -12,6 +13,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByUsername(String username);
 
     Optional<User> findByEmail(String email);
+
+    List<User> findByUsernameInAndStatus(Collection<String> usernames, AccountStatus status);
 
     boolean existsByUsername(String username);
 

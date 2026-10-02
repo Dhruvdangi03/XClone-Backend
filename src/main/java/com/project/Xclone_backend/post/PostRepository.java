@@ -129,6 +129,14 @@ public interface PostRepository extends JpaRepository<Post, Long> {
             nativeQuery = true)
     void deleteHashtagLinksForAuthor(Long authorId);
 
+    /** Removes mentions made by the author's posts and mentions of the author in anyone's posts. */
+    @Modifying
+    @Query(value = """
+            delete from post_mentions
+            where user_id = :userId or post_id in (select id from posts where author_id = :userId)
+            """, nativeQuery = true)
+    void deleteMentionLinksInvolving(Long userId);
+
     @Modifying
     @Query("delete from PostMedia m where m.post.id in (select p.id from Post p where p.author.id = :authorId)")
     void deleteMediaForAuthor(Long authorId);
