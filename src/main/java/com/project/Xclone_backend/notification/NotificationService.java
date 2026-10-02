@@ -51,6 +51,11 @@ public class NotificationService {
     }
 
     @Transactional
+    public void removeRepost(Long actorId, Long postId) {
+        notificationRepository.deleteRepost(actorId, postId);
+    }
+
+    @Transactional
     public void removeForPost(Long postId) {
         notificationRepository.deleteByPost(postId);
     }

@@ -154,6 +154,7 @@ public class PostService {
         }
         if (postRepository.repost(userId, postId) > 0) {
             postRepository.addToRepostCount(postId, 1);
+            notificationService.notify(post.getAuthor(), userService.requireById(userId), NotificationType.REPOST, post);
         }
     }
 
@@ -162,6 +163,7 @@ public class PostService {
         requireLive(postId);
         if (postRepository.unrepost(userId, postId) > 0) {
             postRepository.addToRepostCount(postId, -1);
+            notificationService.removeRepost(userId, postId);
         }
     }
 

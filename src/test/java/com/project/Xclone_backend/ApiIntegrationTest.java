@@ -552,6 +552,13 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.repostedBy").value(nullValue()));
         mvc.perform(auth(get("/api/posts/" + postId), carol)).andExpect(jsonPath("$.repostedByMe").value(false));
 
+        // The author gets exactly one REPOST notification; the self-repost attempt and the duplicate add none.
+        mvc.perform(auth(get("/api/notifications"), alice))
+                .andExpect(jsonPath("$.items", hasSize(1)))
+                .andExpect(jsonPath("$.items[0].type").value("REPOST"))
+                .andExpect(jsonPath("$.items[0].actor.username").value(bob.username()))
+                .andExpect(jsonPath("$.items[0].postId").value(postId));
+
         // The repost appears in followers' timelines and the reposter's profile as the original post.
         String timeline = mvc.perform(auth(get("/api/timeline"), carol))
                 .andExpect(jsonPath("$.items", hasSize(1)))
@@ -575,6 +582,7 @@ class ApiIntegrationTest {
         // Undo is idempotent and removes the repost everywhere.
         mvc.perform(auth(delete(url), bob)).andExpect(status().isNoContent());
         mvc.perform(auth(delete(url), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/notifications"), alice)).andExpect(jsonPath("$.items", hasSize(0)));
         mvc.perform(get("/api/posts/" + postId)).andExpect(jsonPath("$.repostCount").value(0));
         mvc.perform(auth(get("/api/timeline"), carol)).andExpect(jsonPath("$.items", hasSize(0)));
         mvc.perform(get("/api/users/" + bob.username() + "/posts")).andExpect(jsonPath("$.items", hasSize(0)));
