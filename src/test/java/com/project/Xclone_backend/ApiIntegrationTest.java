@@ -807,6 +807,87 @@ class ApiIntegrationTest {
         mvc.perform(get("/api/posts/" + reply)).andExpect(jsonPath("$.mentions", hasSize(0)));
     }
 
+    @Test
+    void notifications() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        Account carol = register();
+
+        // Follow notifies once, even if repeated; self actions and unfollow don't leave extras behind.
+        mvc.perform(auth(post("/api/users/" + alice.username() + "/follow"), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(post("/api/users/" + alice.username() + "/follow"), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/notifications/unread-count"), alice)).andExpect(jsonPath("$.count").value(1));
+        mvc.perform(auth(get("/api/notifications"), alice))
+                .andExpect(jsonPath("$.items", hasSize(1)))
+                .andExpect(jsonPath("$.items[0].type").value("FOLLOW"))
+                .andExpect(jsonPath("$.items[0].actor.username").value(bob.username()))
+                .andExpect(jsonPath("$.items[0].read").value(false));
+        mvc.perform(auth(post("/api/users/" + bob.username() + "/follow"), bob)).andExpect(status().isBadRequest());
+        mvc.perform(auth(get("/api/notifications"), bob)).andExpect(jsonPath("$.items", hasSize(0)));
+
+        // Likes: repeat like is one notification, unlike retracts, self-like is silent.
+        long postId = createPost(alice, "{\"content\":\"hello\"}");
+        mvc.perform(auth(post("/api/posts/" + postId + "/like"), alice)).andExpect(status().isNoContent());
+        mvc.perform(auth(post("/api/posts/" + postId + "/like"), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(post("/api/posts/" + postId + "/like"), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/notifications/unread-count"), alice)).andExpect(jsonPath("$.count").value(2));
+        mvc.perform(auth(delete("/api/posts/" + postId + "/like"), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/notifications/unread-count"), alice)).andExpect(jsonPath("$.count").value(1));
+
+        // Replies notify the parent's author; a mention of that same author is not doubled.
+        long replyId = createPost(carol, "{\"content\":\"@" + alice.username() + " @" + bob.username()
+                + "\",\"replyToId\":" + postId + "}");
+        mvc.perform(auth(get("/api/notifications"), alice))
+                .andExpect(jsonPath("$.items", hasSize(2)))
+                .andExpect(jsonPath("$.items[0].type").value("REPLY"))
+                .andExpect(jsonPath("$.items[0].postId").value(replyId));
+        mvc.perform(auth(get("/api/notifications"), bob))
+                .andExpect(jsonPath("$.items", hasSize(1)))
+                .andExpect(jsonPath("$.items[0].type").value("MENTION"));
+        // Replying to your own post, and mentioning yourself, are silent.
+        createPost(alice, "{\"content\":\"@" + alice.username() + "\",\"replyToId\":" + postId + "}");
+        mvc.perform(auth(get("/api/notifications/unread-count"), alice)).andExpect(jsonPath("$.count").value(2));
+
+        // Edit only notifies newly added mentions.
+        long carolPost = createPost(carol, "{\"content\":\"hi @" + bob.username() + "\"}");
+        mvc.perform(json(auth(patch("/api/posts/" + carolPost), carol),
+                        "{\"content\":\"hi @" + bob.username() + " @" + alice.username() + "\"}"))
+                .andExpect(status().isOk());
+        mvc.perform(auth(get("/api/notifications/unread-count"), bob)).andExpect(jsonPath("$.count").value(2));
+        mvc.perform(auth(get("/api/notifications/unread-count"), alice)).andExpect(jsonPath("$.count").value(3));
+
+        // Paging, reading, deleting; other users can't touch your notifications.
+        String page = mvc.perform(auth(get("/api/notifications?limit=2"), alice))
+                .andExpect(jsonPath("$.items", hasSize(2)))
+                .andReturn().getResponse().getContentAsString();
+        long cursor = ((Number) JsonPath.read(page, "$.nextCursor")).longValue();
+        long firstId = ((Number) JsonPath.read(page, "$.items[0].id")).longValue();
+        mvc.perform(auth(get("/api/notifications?limit=2&cursor=" + cursor), alice))
+                .andExpect(jsonPath("$.items", hasSize(1)));
+        mvc.perform(auth(post("/api/notifications/" + firstId + "/read"), bob)).andExpect(status().isNotFound());
+        mvc.perform(auth(delete("/api/notifications/" + firstId), bob)).andExpect(status().isNotFound());
+        mvc.perform(auth(post("/api/notifications/" + firstId + "/read"), alice)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/notifications/unread-count"), alice)).andExpect(jsonPath("$.count").value(2));
+        mvc.perform(auth(post("/api/notifications/read"), alice)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/notifications/unread-count"), alice)).andExpect(jsonPath("$.count").value(0));
+        mvc.perform(auth(delete("/api/notifications/" + firstId), alice)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/notifications?limit=50"), alice)).andExpect(jsonPath("$.items", hasSize(2)));
+
+        // Blocking: no notifications across a block, and existing ones from the blocked user are hidden.
+        mvc.perform(auth(post("/api/users/" + carol.username() + "/block"), alice)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/notifications?limit=50"), alice))
+                .andExpect(jsonPath("$.items[?(@.actor.username == '" + carol.username() + "')]", hasSize(0)));
+        mvc.perform(json(auth(patch("/api/posts/" + carolPost), carol),
+                        "{\"content\":\"hi @" + alice.username() + " @" + bob.username() + " again\"}"))
+                .andExpect(status().isOk());
+        mvc.perform(auth(get("/api/notifications/unread-count"), alice)).andExpect(jsonPath("$.count").value(0));
+
+        // Deleting the post removes its notifications; unauthenticated access is rejected.
+        mvc.perform(auth(delete("/api/posts/" + carolPost), carol)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/notifications/unread-count"), bob)).andExpect(jsonPath("$.count").value(1));
+        mvc.perform(get("/api/notifications")).andExpect(status().isUnauthorized());
+    }
+
     private List<Long> mentionedIds(long postId) {
         return jdbc.queryForList("select user_id from post_mentions where post_id = ?", Long.class, postId);
     }

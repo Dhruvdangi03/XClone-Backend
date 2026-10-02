@@ -61,6 +61,10 @@ All endpoints are under `/api`. Send `Authorization: Bearer <accessToken>` for a
 | GET | `/posts/{id}/replies` | optional | paged, oldest first |
 | POST / DELETE | `/posts/{id}/like` | ✓ | idempotent |
 | GET | `/posts/{id}/likes` | – | users who liked, paged |
+| GET | `/notifications` | ✓ | follow / like / reply / mention notifications, newest first, paged; hides blocked or inactive actors |
+| GET | `/notifications/unread-count` | ✓ | |
+| POST | `/notifications/read`, `/notifications/{id}/read` | ✓ | mark all / one as read |
+| DELETE | `/notifications/{id}` | ✓ | |
 | GET | `/timeline` | ✓ | your posts + people you follow, newest first |
 | POST | `/media/upload-url` | ✓ | see above |
 

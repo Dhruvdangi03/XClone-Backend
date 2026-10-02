@@ -3,6 +3,7 @@ package com.project.Xclone_backend.post;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
@@ -18,6 +19,8 @@ import com.project.Xclone_backend.like.LikeRepository;
 import com.project.Xclone_backend.like.PostLike;
 import com.project.Xclone_backend.media.MediaService;
 import com.project.Xclone_backend.mention.MentionService;
+import com.project.Xclone_backend.notification.NotificationService;
+import com.project.Xclone_backend.notification.NotificationType;
 import com.project.Xclone_backend.post.PostDtos.CreatePostRequest;
 import com.project.Xclone_backend.post.PostDtos.PostResponse;
 import com.project.Xclone_backend.post.PostDtos.UpdatePostRequest;
@@ -44,6 +47,7 @@ public class PostService {
     private final PostReportRepository postReportRepository;
     private final BookmarkRepository bookmarkRepository;
     private final MentionService mentionService;
+    private final NotificationService notificationService;
 
     @Transactional
     public PostResponse create(Long authorId, CreatePostRequest req) {
@@ -55,7 +59,8 @@ public class PostService {
         mediaKeys.forEach(key -> mediaService.verifyOwnedUpload(authorId, key));
 
         Post post = new Post();
-        post.setAuthor(userService.requireById(authorId));
+        User author = userService.requireById(authorId);
+        post.setAuthor(author);
         post.setContent(content);
         mediaKeys.forEach(post::addMedia);
         syncHashtags(post);
@@ -67,13 +72,22 @@ public class PostService {
             }
             post.setQuoteOf(requireLive(req.quotedPostId()));
         }
+        Post parent = null;
         if (req.replyToId() != null) {
-            Post parent = requireLive(req.replyToId());
+            parent = requireLive(req.replyToId());
             userService.requireNotBlocked(authorId, parent.getAuthor().getId());
             post.setParent(parent);
             postRepository.addToReplyCount(parent.getId(), 1);
         }
         postRepository.save(post);
+        if (parent != null) {
+            notificationService.notify(parent.getAuthor(), author, NotificationType.REPLY, post);
+        }
+        for (User mentioned : post.getMentions()) {
+            if (parent == null || !mentioned.getId().equals(parent.getAuthor().getId())) {
+                notificationService.notify(mentioned, author, NotificationType.MENTION, post);
+            }
+        }
         return postMapper.toResponse(post, authorId);
     }
 
@@ -90,9 +104,15 @@ public class PostService {
         if (!post.getAuthor().getId().equals(userId)) {
             throw ApiException.forbidden("You can only edit your own posts");
         }
+        Set<Long> previouslyMentioned = post.getMentions().stream().map(User::getId).collect(Collectors.toSet());
         post.setContent(req.content().strip());
         syncHashtags(post);
         syncMentions(post);
+        for (User mentioned : post.getMentions()) {
+            if (!previouslyMentioned.contains(mentioned.getId())) {
+                notificationService.notify(mentioned, post.getAuthor(), NotificationType.MENTION, post);
+            }
+        }
         return postMapper.toResponse(post, userId);
     }
 
@@ -104,6 +124,7 @@ public class PostService {
         }
         post.setDeleted(true);
         post.getMentions().clear();
+        notificationService.removeForPost(postId);
         if (post.getParent() != null) {
             postRepository.addToReplyCount(post.getParent().getId(), -1);
         }
@@ -146,6 +167,7 @@ public class PostService {
         userService.requireNotBlocked(userId, post.getAuthor().getId());
         if (likeRepository.like(userId, postId) > 0) {
             postRepository.addToLikeCount(postId, 1);
+            notificationService.notify(post.getAuthor(), userService.requireById(userId), NotificationType.LIKE, post);
         }
     }
 
@@ -154,6 +176,7 @@ public class PostService {
         requireLive(postId);
         if (likeRepository.unlike(userId, postId) > 0) {
             postRepository.addToLikeCount(postId, -1);
+            notificationService.removeLike(userId, postId);
         }
     }
 
