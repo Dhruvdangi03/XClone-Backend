@@ -1,5 +1,6 @@
 package com.project.Xclone_backend.conversation;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -43,4 +44,9 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
             order by c.id desc
             """)
     List<Conversation> findPage(Long userId, long cursor, Limit limit);
+
+    /** Bumps updatedAt explicitly, since a new message does not dirty the conversation entity. */
+    @Modifying
+    @Query("update Conversation c set c.updatedAt = :now where c.id = :id")
+    int touch(Long id, Instant now);
 }
