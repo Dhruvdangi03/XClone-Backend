@@ -305,6 +305,44 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void trendingHashtags() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        String t = "t" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        String wide = "wide" + t, spam = "spam" + t, once = "once" + t, gone = "gone" + t;
+
+        // wide: 2 authors / 2 posts. spam: 1 author / 2 posts. once: 1 author / 1 post.
+        createPost(alice, "{\"content\":\"#Wide" + t + " #Once" + t + "\"}");
+        createPost(bob, "{\"content\":\"#wide" + t + "\"}");
+        createPost(alice, "{\"content\":\"#spam" + t + "\"}");
+        createPost(alice, "{\"content\":\"#spam" + t + " again\"}");
+        long deleted = createPost(alice, "{\"content\":\"#" + gone + "\"}");
+        mvc.perform(auth(delete("/api/posts/" + deleted), alice)).andExpect(status().isNoContent());
+
+        // Public; ranked by distinct authors, then posts, and deleted posts do not count.
+        String body = mvc.perform(get("/api/trending/hashtags").param("limit", "50"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        List<String> names = JsonPath.read(body, "$[*].name");
+        org.assertj.core.api.Assertions.assertThat(names).doesNotContain(gone);
+        org.assertj.core.api.Assertions.assertThat(names.indexOf(wide)).isGreaterThanOrEqualTo(0)
+                .isLessThan(names.indexOf(spam));
+        org.assertj.core.api.Assertions.assertThat(names.indexOf(spam)).isLessThan(names.indexOf(once));
+        List<Integer> wideCounts = JsonPath.read(body, "$[?(@.name=='" + wide + "')].postCount");
+        List<Integer> wideUsers = JsonPath.read(body, "$[?(@.name=='" + wide + "')].userCount");
+        org.assertj.core.api.Assertions.assertThat(wideCounts).containsExactly(2);
+        org.assertj.core.api.Assertions.assertThat(wideUsers).containsExactly(2);
+
+        // Limit is honoured and out-of-range params are clamped rather than rejected.
+        mvc.perform(get("/api/trending/hashtags").param("limit", "1"))
+                .andExpect(jsonPath("$", hasSize(1)));
+        mvc.perform(get("/api/trending/hashtags").param("hours", "-5").param("limit", "0"))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/trending/hashtags").param("hours", "100000"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void reportUser() throws Exception {
         Account alice = register();
         Account bob = register();
