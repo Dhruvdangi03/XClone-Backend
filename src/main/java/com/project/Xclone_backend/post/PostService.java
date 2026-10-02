@@ -2,6 +2,7 @@ package com.project.Xclone_backend.post;
 
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 import org.springframework.data.domain.Limit;
@@ -33,6 +34,9 @@ import lombok.RequiredArgsConstructor;
 @Service
 @RequiredArgsConstructor
 public class PostService {
+
+    private static final int SEARCH_MIN_LENGTH = 2;
+    private static final int SEARCH_MAX_LENGTH = 100;
 
     private final PostRepository postRepository;
     private final LikeRepository likeRepository;
@@ -233,6 +237,22 @@ public class PostService {
         int n = CursorPage.clampLimit(limit);
         List<Post> rows = postRepository.findByHashtag(HashtagService.normalize(name), CursorPage.cursorOrMax(cursor),
                 Limit.of(n + 1));
+        return CursorPage.of(rows, n, Post::getId, page -> postMapper.toResponses(page, viewerId));
+    }
+
+    @Transactional(readOnly = true)
+    public CursorPage<PostResponse> search(String q, Long viewerId, Long cursor, Integer limit) {
+        String term = q == null ? "" : q.strip().toLowerCase(Locale.ROOT);
+        if (term.length() < SEARCH_MIN_LENGTH) {
+            throw ApiException.badRequest("Search query must be at least " + SEARCH_MIN_LENGTH + " characters");
+        }
+        if (term.length() > SEARCH_MAX_LENGTH) {
+            throw ApiException.badRequest("Search query must be at most " + SEARCH_MAX_LENGTH + " characters");
+        }
+        String escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        int n = CursorPage.clampLimit(limit);
+        List<Post> rows = postRepository.searchByContent("%" + escaped + "%", viewerId,
+                CursorPage.cursorOrMax(cursor), Limit.of(n + 1));
         return CursorPage.of(rows, n, Post::getId, page -> postMapper.toResponses(page, viewerId));
     }
 
