@@ -1,14 +1,20 @@
 package com.project.Xclone_backend.hashtag;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import com.project.Xclone_backend.hashtag.HashtagDtos.TrendingHashtag;
 
 import lombok.RequiredArgsConstructor;
 
@@ -23,7 +29,20 @@ public class HashtagService {
     private static final Pattern HASHTAG =
             Pattern.compile("(?<![\\p{L}\\p{N}_#&/])#([\\p{L}\\p{N}_]*\\p{L}[\\p{L}\\p{N}_]*)");
 
+    public static final int TRENDING_DEFAULT_HOURS = 24;
+    public static final int TRENDING_MAX_HOURS = 168;
+    public static final int TRENDING_DEFAULT_LIMIT = 10;
+    public static final int TRENDING_MAX_LIMIT = 50;
+
     private final HashtagRepository hashtagRepository;
+
+    /** Hashtags most used by live posts in the last {@code hours} hours (default 24, max 7 days). */
+    @Transactional(readOnly = true)
+    public List<TrendingHashtag> trending(Integer hours, Integer limit) {
+        int h = hours == null || hours <= 0 ? TRENDING_DEFAULT_HOURS : Math.min(hours, TRENDING_MAX_HOURS);
+        int n = limit == null || limit <= 0 ? TRENDING_DEFAULT_LIMIT : Math.min(limit, TRENDING_MAX_LIMIT);
+        return hashtagRepository.findTrending(Instant.now().minus(Duration.ofHours(h)), Limit.of(n));
+    }
 
     /** Distinct normalized tags in order of first appearance. */
     public static Set<String> extract(String content) {

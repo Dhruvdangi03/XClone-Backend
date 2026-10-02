@@ -38,7 +38,8 @@ import lombok.Setter;
         @Index(name = "idx_posts_author_id", columnList = "author_id, id"),
         @Index(name = "idx_posts_parent_id", columnList = "parent_id, id"),
         @Index(name = "idx_posts_repost_of", columnList = "repost_of_id"),
-        @Index(name = "idx_posts_quote_of", columnList = "quote_of_id")},
+        @Index(name = "idx_posts_quote_of", columnList = "quote_of_id"),
+        @Index(name = "idx_posts_created_at", columnList = "created_at")},
         uniqueConstraints = @UniqueConstraint(name = "uk_posts_repost", columnNames = {"author_id", "repost_of_id"}))
 @Getter
 @Setter
