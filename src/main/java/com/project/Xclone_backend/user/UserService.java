@@ -154,6 +154,7 @@ public class UserService {
         followRepository.deleteAllInvolving(userId);
         refreshTokenRepository.deleteAllForUser(userId);
         postRepository.deleteHashtagLinksForAuthor(userId);
+        postRepository.deleteMentionLinksInvolving(userId);
         postRepository.deleteMediaForAuthor(userId);
         postRepository.softDeleteAndClearAllByAuthor(userId);
 

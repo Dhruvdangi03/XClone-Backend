@@ -1,5 +1,6 @@
 package com.project.Xclone_backend.post;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -12,6 +13,7 @@ import com.project.Xclone_backend.config.R2Properties;
 import com.project.Xclone_backend.like.LikeRepository;
 import com.project.Xclone_backend.post.PostDtos.PostResponse;
 import com.project.Xclone_backend.user.UserDtos.UserSummary;
+import com.project.Xclone_backend.user.User;
 import com.project.Xclone_backend.user.UserMapper;
 
 import lombok.RequiredArgsConstructor;
@@ -64,10 +66,12 @@ public class PostMapper {
 
     private PostResponse map(Post p, boolean likedByMe, boolean repostedByMe, UserSummary repostedBy,
             PostResponse quotedPost) {
+        List<UserSummary> mentions = p.getMentions().stream()
+                .sorted(Comparator.comparing(User::getUsername)).map(userMapper::toSummary).toList();
         List<String> mediaUrls = p.getMedia().stream().map(m -> r2.publicUrl(m.getR2Key())).toList();
         Long replyToId = p.getParent() == null ? null : p.getParent().getId();
         return new PostResponse(p.getId(), userMapper.toSummary(p.getAuthor()), p.getContent(), mediaUrls,
                 replyToId, p.getLikeCount(), p.getReplyCount(), likedByMe, p.getCreatedAt(),
-                p.getRepostCount(), repostedByMe, repostedBy, quotedPost);
+                p.getRepostCount(), repostedByMe, repostedBy, quotedPost, mentions);
     }
 }
