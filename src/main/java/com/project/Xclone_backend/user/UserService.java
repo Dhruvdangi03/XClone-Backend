@@ -13,6 +13,7 @@ import com.project.Xclone_backend.common.ApiException;
 import com.project.Xclone_backend.common.CursorPage;
 import com.project.Xclone_backend.follow.Follow;
 import com.project.Xclone_backend.follow.FollowRepository;
+import com.project.Xclone_backend.bookmark.BookmarkRepository;
 import com.project.Xclone_backend.like.LikeRepository;
 import com.project.Xclone_backend.media.MediaService;
 import com.project.Xclone_backend.post.PostRepository;
@@ -44,6 +45,7 @@ public class UserService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final PostRepository postRepository;
     private final LikeRepository likeRepository;
+    private final BookmarkRepository bookmarkRepository;
 
     public User requireByUsername(String username) {
         return userRepository.findByUsername(username.toLowerCase(Locale.ROOT))
@@ -138,6 +140,7 @@ public class UserService {
         postRepository.decrementLikeCountsForLiker(userId);
         postRepository.decrementRepostCountsForReposter(userId);
         likeRepository.deleteAllByUser(userId);
+        bookmarkRepository.deleteAllByUser(userId);
         followRepository.deleteAllInvolving(userId);
         refreshTokenRepository.deleteAllForUser(userId);
         postRepository.deleteHashtagLinksForAuthor(userId);
