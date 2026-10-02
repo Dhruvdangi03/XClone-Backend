@@ -566,6 +566,105 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void quotePosts() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        long original = createPost(alice, "{\"content\":\"original\"}");
+
+        String res = mvc.perform(json(auth(post("/api/posts"), bob),
+                        "{\"content\":\"my take\",\"quotedPostId\":" + original + "}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.content").value("my take"))
+                .andExpect(jsonPath("$.author.id").value(bob.id()))
+                .andExpect(jsonPath("$.quotedPost.id").value(original))
+                .andExpect(jsonPath("$.quotedPost.content").value("original"))
+                .andExpect(jsonPath("$.quotedPost.author.id").value(alice.id()))
+                .andExpect(jsonPath("$.quotedPost.quotedPost").value(nullValue()))
+                .andReturn().getResponse().getContentAsString();
+        long quote = ((Number) JsonPath.read(res, "$.id")).longValue();
+        org.assertj.core.api.Assertions.assertThat(quote).isNotEqualTo(original);
+
+        // The original is untouched, and the quote is a normal post on timelines and by id.
+        mvc.perform(get("/api/posts/" + original))
+                .andExpect(jsonPath("$.content").value("original"))
+                .andExpect(jsonPath("$.likeCount").value(0))
+                .andExpect(jsonPath("$.repostCount").value(0))
+                .andExpect(jsonPath("$.quotedPost").value(nullValue()));
+        mvc.perform(get("/api/posts/" + quote)).andExpect(jsonPath("$.quotedPost.id").value(original));
+        mvc.perform(get("/api/users/" + bob.username() + "/posts"))
+                .andExpect(jsonPath("$.items[0].id").value(quote))
+                .andExpect(jsonPath("$.items[0].quotedPost.content").value("original"));
+        mvc.perform(auth(get("/api/timeline"), bob)).andExpect(jsonPath("$.items[0].quotedPost.id").value(original));
+
+        // A user can quote their own post, and quoting a quote shows only one level.
+        mvc.perform(json(auth(post("/api/posts"), alice),
+                        "{\"content\":\"quoting the quote\",\"quotedPostId\":" + quote + "}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.quotedPost.id").value(quote))
+                .andExpect(jsonPath("$.quotedPost.quotedPost").value(nullValue()));
+
+        // Deleting the original soft-deletes it; the quote survives and no longer exposes the original.
+        mvc.perform(auth(delete("/api/posts/" + original), alice)).andExpect(status().isNoContent());
+        mvc.perform(get("/api/posts/" + quote))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content").value("my take"))
+                .andExpect(jsonPath("$.quotedPost").value(nullValue()));
+        // ...and it cannot be quoted any more.
+        mvc.perform(json(auth(post("/api/posts"), bob),
+                        "{\"content\":\"too late\",\"quotedPostId\":" + original + "}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void quotePostValidationAndAccessRules() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        Account carol = register();
+        long original = createPost(alice, "{\"content\":\"original\"}");
+        String quoteBody = "{\"content\":\"hi\",\"quotedPostId\":" + original + "}";
+
+        // Authentication is required.
+        mvc.perform(json(post("/api/posts"), quoteBody)).andExpect(status().isUnauthorized());
+
+        // The quoted post must exist.
+        mvc.perform(json(auth(post("/api/posts"), bob), "{\"content\":\"hi\",\"quotedPostId\":999999999}"))
+                .andExpect(status().isNotFound());
+
+        // The usual content rules apply.
+        mvc.perform(json(auth(post("/api/posts"), bob),
+                        "{\"content\":\"" + "x".repeat(281) + "\",\"quotedPostId\":" + original + "}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(json(auth(post("/api/posts"), bob), "{\"content\":\"  \",\"quotedPostId\":" + original + "}"))
+                .andExpect(status().isBadRequest());
+        // A post is either a reply or a quote.
+        mvc.perform(json(auth(post("/api/posts"), bob),
+                        "{\"content\":\"hi\",\"quotedPostId\":" + original + ",\"replyToId\":" + original + "}"))
+                .andExpect(status().isBadRequest());
+
+        // A repost row's own id is not a post that can be quoted.
+        mvc.perform(auth(post("/api/posts/" + original + "/repost"), bob)).andExpect(status().isNoContent());
+        Long repostRowId = jdbc.queryForObject("select id from posts where author_id = ? and repost_of_id = ?",
+                Long.class, bob.id(), original);
+        mvc.perform(json(auth(post("/api/posts"), carol),
+                        "{\"content\":\"hi\",\"quotedPostId\":" + repostRowId + "}"))
+                .andExpect(status().isNotFound());
+
+        // A deactivated user cannot quote with an old token.
+        mvc.perform(auth(post("/api/users/me/deactivate"), carol)).andExpect(status().isNoContent());
+        mvc.perform(json(auth(post("/api/posts"), carol), quoteBody)).andExpect(status().isUnauthorized());
+
+        // Posts of a deleted account cannot be quoted.
+        mvc.perform(json(auth(delete("/api/users/me"), alice), "{\"password\":\"password123\"}"))
+                .andExpect(status().isNoContent());
+        mvc.perform(json(auth(post("/api/posts"), bob), quoteBody)).andExpect(status().isNotFound());
+
+        // Nothing was created by the rejected requests.
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select count(*) from posts where author_id in (?, ?) and quote_of_id is not null",
+                Long.class, bob.id(), carol.id())).isZero();
+    }
+
+    @Test
     void followAndTimelinePaging() throws Exception {
         Account alice = register();
         Account bob = register();

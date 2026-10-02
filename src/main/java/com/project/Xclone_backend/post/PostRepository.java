@@ -16,6 +16,10 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     @Query("select p from Post p join fetch p.author where p.id = :id and p.deleted = false and p.repostOf is null")
     Optional<Post> findLive(Long id);
 
+    /** Live posts by id, authors fetched; used to render the quoted post of quote posts in one query. */
+    @Query("select p from Post p join fetch p.author where p.id in :ids and p.deleted = false")
+    List<Post> findLiveByIds(Collection<Long> ids);
+
     /** Top-level posts and reposts by one author, newest first. Reposts of deleted posts are skipped. */
     @Query("""
             select p from Post p join fetch p.author left join fetch p.repostOf o left join fetch o.author
