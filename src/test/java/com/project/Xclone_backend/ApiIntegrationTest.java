@@ -20,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -51,6 +52,9 @@ class ApiIntegrationTest {
 
     @Autowired
     PostReportRepository postReportRepository;
+
+    @Autowired
+    JdbcTemplate jdbc;
 
     @MockitoBean
     S3Client s3Client;
@@ -469,6 +473,96 @@ class ApiIntegrationTest {
         // The username and email are free again.
         mvc.perform(json(post("/api/auth/register"), registerBody(alice.username(), alice.username())))
                 .andExpect(status().isCreated());
+    }
+
+    @Test
+    void reposts() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        Account carol = register();
+        long postId = createPost(alice, "{\"content\":\"worth sharing\"}");
+        String url = "/api/posts/" + postId + "/repost";
+        mvc.perform(auth(post("/api/users/" + bob.username() + "/follow"), carol)).andExpect(status().isNoContent());
+
+        // Auth, existence and ownership rules.
+        mvc.perform(post(url)).andExpect(status().isUnauthorized());
+        mvc.perform(auth(post("/api/posts/999999999/repost"), bob)).andExpect(status().isNotFound());
+        mvc.perform(auth(post(url), alice)).andExpect(status().isBadRequest());
+
+        // Reposting twice keeps a single repost.
+        mvc.perform(auth(post(url), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(post(url), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/posts/" + postId), bob))
+                .andExpect(jsonPath("$.repostCount").value(1))
+                .andExpect(jsonPath("$.repostedByMe").value(true))
+                .andExpect(jsonPath("$.repostedBy").value(nullValue()));
+        mvc.perform(auth(get("/api/posts/" + postId), carol)).andExpect(jsonPath("$.repostedByMe").value(false));
+
+        // The repost appears in followers' timelines and the reposter's profile as the original post.
+        String timeline = mvc.perform(auth(get("/api/timeline"), carol))
+                .andExpect(jsonPath("$.items", hasSize(1)))
+                .andExpect(jsonPath("$.items[0].id").value(postId))
+                .andExpect(jsonPath("$.items[0].author.username").value(alice.username()))
+                .andExpect(jsonPath("$.items[0].content").value("worth sharing"))
+                .andExpect(jsonPath("$.items[0].repostedBy.username").value(bob.username()))
+                .andExpect(jsonPath("$.items[0].repostCount").value(1))
+                .andExpect(jsonPath("$.items[0].repostedByMe").value(false))
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat((Object) JsonPath.read(timeline, "$.nextCursor")).isNull();
+        mvc.perform(auth(get("/api/users/" + bob.username() + "/posts"), bob))
+                .andExpect(jsonPath("$.items[0].id").value(postId))
+                .andExpect(jsonPath("$.items[0].repostedBy.username").value(bob.username()))
+                .andExpect(jsonPath("$.items[0].repostedByMe").value(true));
+        // The original author's profile is unchanged: one post, not reposted.
+        mvc.perform(get("/api/users/" + alice.username() + "/posts"))
+                .andExpect(jsonPath("$.items", hasSize(1)))
+                .andExpect(jsonPath("$.items[0].repostedBy").value(nullValue()));
+
+        // Undo is idempotent and removes the repost everywhere.
+        mvc.perform(auth(delete(url), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(delete(url), bob)).andExpect(status().isNoContent());
+        mvc.perform(get("/api/posts/" + postId)).andExpect(jsonPath("$.repostCount").value(0));
+        mvc.perform(auth(get("/api/timeline"), carol)).andExpect(jsonPath("$.items", hasSize(0)));
+        mvc.perform(get("/api/users/" + bob.username() + "/posts")).andExpect(jsonPath("$.items", hasSize(0)));
+
+        // Reposting again works after an undo.
+        mvc.perform(auth(post(url), bob)).andExpect(status().isNoContent());
+        mvc.perform(get("/api/posts/" + postId)).andExpect(jsonPath("$.repostCount").value(1));
+
+        // Deleting the original hides existing reposts, and it can no longer be reposted.
+        mvc.perform(auth(delete("/api/posts/" + postId), alice)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/timeline"), carol)).andExpect(jsonPath("$.items", hasSize(0)));
+        mvc.perform(auth(post(url), carol)).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void repostAccessRules() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        Account carol = register();
+        long postId = createPost(alice, "{\"content\":\"original\"}");
+        mvc.perform(auth(post("/api/posts/" + postId + "/repost"), bob)).andExpect(status().isNoContent());
+
+        // A repost row's own id is not a post that can be fetched or reposted.
+        Long repostRowId = jdbc.queryForObject("select id from posts where author_id = ? and repost_of_id = ?",
+                Long.class, bob.id(), postId);
+        mvc.perform(get("/api/posts/" + repostRowId)).andExpect(status().isNotFound());
+        mvc.perform(auth(post("/api/posts/" + repostRowId + "/repost"), carol)).andExpect(status().isNotFound());
+
+        // A deactivated user cannot repost with an old token.
+        mvc.perform(auth(post("/api/users/me/deactivate"), carol)).andExpect(status().isNoContent());
+        mvc.perform(auth(post("/api/posts/" + postId + "/repost"), carol)).andExpect(status().isUnauthorized());
+
+        // When the reposter deletes their account, their repost and its count go away.
+        mvc.perform(json(auth(delete("/api/users/me"), bob), "{\"password\":\"password123\"}"))
+                .andExpect(status().isNoContent());
+        mvc.perform(get("/api/posts/" + postId)).andExpect(jsonPath("$.repostCount").value(0));
+
+        // Posts of a deleted account cannot be reposted.
+        Account dave = register();
+        mvc.perform(json(auth(delete("/api/users/me"), alice), "{\"password\":\"password123\"}"))
+                .andExpect(status().isNoContent());
+        mvc.perform(auth(post("/api/posts/" + postId + "/repost"), dave)).andExpect(status().isNotFound());
     }
 
     @Test

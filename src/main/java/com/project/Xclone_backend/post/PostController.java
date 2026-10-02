@@ -67,6 +67,18 @@ public class PostController {
         postService.report(id, me.id(), req.reason());
     }
 
+    @PostMapping("/posts/{id}/repost")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void repost(@PathVariable Long id, @AuthenticationPrincipal AuthUser me) {
+        postService.repost(id, me.id());
+    }
+
+    @DeleteMapping("/posts/{id}/repost")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void unrepost(@PathVariable Long id, @AuthenticationPrincipal AuthUser me) {
+        postService.unrepost(id, me.id());
+    }
+
     @PostMapping("/posts/{id}/like")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void like(@PathVariable Long id, @AuthenticationPrincipal AuthUser me) {
