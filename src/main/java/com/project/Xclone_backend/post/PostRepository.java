@@ -1,7 +1,9 @@
 package com.project.Xclone_backend.post;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -10,13 +12,15 @@ import org.springframework.data.jpa.repository.Query;
 
 public interface PostRepository extends JpaRepository<Post, Long> {
 
-    @Query("select p from Post p join fetch p.author where p.id = :id and p.deleted = false")
+    /** Repost rows are excluded: clients always act on the original's id. */
+    @Query("select p from Post p join fetch p.author where p.id = :id and p.deleted = false and p.repostOf is null")
     Optional<Post> findLive(Long id);
 
-    /** Top-level posts by one author, newest first. */
+    /** Top-level posts and reposts by one author, newest first. Reposts of deleted posts are skipped. */
     @Query("""
-            select p from Post p join fetch p.author
+            select p from Post p join fetch p.author left join fetch p.repostOf o left join fetch o.author
             where p.author.id = :authorId and p.parent is null and p.deleted = false and p.id < :cursor
+              and (o is null or o.deleted = false)
             order by p.id desc
             """)
     List<Post> findUserPosts(Long authorId, long cursor, Limit limit);
@@ -48,12 +52,13 @@ public interface PostRepository extends JpaRepository<Post, Long> {
             """)
     List<Post> findByHashtag(String name, long cursor, Limit limit);
 
-    /** Home timeline: top-level posts by the user and everyone they follow, newest first. */
+    /** Home timeline: top-level posts and reposts by the user and everyone they follow, newest first. */
     @Query("""
-            select p from Post p join fetch p.author
+            select p from Post p join fetch p.author left join fetch p.repostOf o left join fetch o.author
             where (p.author.id = :userId
                    or p.author.id in (select f.followee.id from Follow f where f.follower.id = :userId))
               and p.parent is null and p.deleted = false and p.id < :cursor
+              and (o is null or o.deleted = false)
             order by p.id desc
             """)
     List<Post> findTimeline(Long userId, long cursor, Limit limit);
@@ -65,6 +70,29 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     @Modifying
     @Query("update Post p set p.replyCount = p.replyCount + :delta where p.id = :id")
     void addToReplyCount(Long id, int delta);
+
+    /** Idempotent: returns 1 if a new repost row was created, 0 if the user had already reposted the post. */
+    @Modifying
+    @Query(value = """
+            insert into posts (author_id, repost_of_id, content, like_count, reply_count, repost_count, deleted, created_at)
+            values (:userId, :postId, '', 0, 0, 0, false, now())
+            on conflict (author_id, repost_of_id) do nothing
+            """, nativeQuery = true)
+    int repost(Long userId, Long postId);
+
+    @Modifying
+    @Query("delete from Post p where p.author.id = :userId and p.repostOf.id = :postId")
+    int unrepost(Long userId, Long postId);
+
+    @Modifying
+    @Query("update Post p set p.repostCount = p.repostCount + :delta where p.id = :id")
+    void addToRepostCount(Long id, int delta);
+
+    @Query("""
+            select p.repostOf.id from Post p
+            where p.author.id = :userId and p.deleted = false and p.repostOf.id in :postIds
+            """)
+    Set<Long> findRepostedPostIds(Long userId, Collection<Long> postIds);
 
     // --- Account deletion. Count fixes must run before the likes are deleted and the posts are soft-deleted.
 
@@ -78,6 +106,14 @@ public interface PostRepository extends JpaRepository<Post, Long> {
             where p.id = r.parent_id
             """, nativeQuery = true)
     void decrementReplyCountsForAuthor(Long authorId);
+
+    /** Takes the user's live reposts out of the repost counts of the posts they reposted. */
+    @Modifying
+    @Query(value = """
+            update posts p set repost_count = p.repost_count - 1
+            from posts r where r.repost_of_id = p.id and r.author_id = :userId and r.deleted = false
+            """, nativeQuery = true)
+    void decrementRepostCountsForReposter(Long userId);
 
     /** Takes the user's likes out of the like counts of the posts they liked. */
     @Modifying

@@ -146,6 +146,7 @@ public class UserService {
 
         postRepository.decrementReplyCountsForAuthor(userId);
         postRepository.decrementLikeCountsForLiker(userId);
+        postRepository.decrementRepostCountsForReposter(userId);
         likeRepository.deleteAllByUser(userId);
         followRepository.deleteAllInvolving(userId);
         refreshTokenRepository.deleteAllForUser(userId);

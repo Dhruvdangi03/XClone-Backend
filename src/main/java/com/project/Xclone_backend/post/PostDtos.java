@@ -25,7 +25,9 @@ public final class PostDtos {
     public record UpdatePostRequest(@NotBlank @Size(max = Post.MAX_LENGTH) String content) {
     }
 
+    /** For a repost, every field describes the original post and {@code repostedBy} is who reposted it. */
     public record PostResponse(Long id, UserSummary author, String content, List<String> mediaUrls,
-            Long replyToId, int likeCount, int replyCount, boolean likedByMe, Instant createdAt) {
+            Long replyToId, int likeCount, int replyCount, boolean likedByMe, Instant createdAt,
+            int repostCount, boolean repostedByMe, UserSummary repostedBy) {
     }
 }

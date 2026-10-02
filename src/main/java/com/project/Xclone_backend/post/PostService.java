@@ -108,6 +108,25 @@ public class PostService {
     }
 
     @Transactional
+    public void repost(Long postId, Long userId) {
+        Post post = requireLive(postId);
+        if (post.getAuthor().getId().equals(userId)) {
+            throw ApiException.badRequest("You cannot repost your own post");
+        }
+        if (postRepository.repost(userId, postId) > 0) {
+            postRepository.addToRepostCount(postId, 1);
+        }
+    }
+
+    @Transactional
+    public void unrepost(Long postId, Long userId) {
+        requireLive(postId);
+        if (postRepository.unrepost(userId, postId) > 0) {
+            postRepository.addToRepostCount(postId, -1);
+        }
+    }
+
+    @Transactional
     public void like(Long postId, Long userId) {
         Post post = requireLive(postId);
         userService.requireNotBlocked(userId, post.getAuthor().getId());

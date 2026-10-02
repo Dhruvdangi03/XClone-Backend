@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Set;
 
 import org.hibernate.annotations.BatchSize;
+import org.hibernate.annotations.ColumnDefault;
 import org.hibernate.annotations.CreationTimestamp;
 
 import com.project.Xclone_backend.hashtag.Hashtag;
@@ -27,6 +28,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -34,7 +36,9 @@ import lombok.Setter;
 @Entity
 @Table(name = "posts", indexes = {
         @Index(name = "idx_posts_author_id", columnList = "author_id, id"),
-        @Index(name = "idx_posts_parent_id", columnList = "parent_id, id")})
+        @Index(name = "idx_posts_parent_id", columnList = "parent_id, id"),
+        @Index(name = "idx_posts_repost_of", columnList = "repost_of_id")},
+        uniqueConstraints = @UniqueConstraint(name = "uk_posts_repost", columnNames = {"author_id", "repost_of_id"}))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -59,11 +63,24 @@ public class Post {
     @JoinColumn(name = "parent_id")
     private Post parent;
 
+    /**
+     * Non-null when this row is a repost: it has no content, media or parent of its own and is rendered as the
+     * original. Repost rows are never addressable by id (see {@link PostRepository#findLive}).
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "repost_of_id")
+    private Post repostOf;
+
     @Column(nullable = false)
     private int likeCount;
 
     @Column(nullable = false)
     private int replyCount;
+
+    /** The column default lets ddl-auto add this column to tables that already have rows. */
+    @ColumnDefault("0")
+    @Column(nullable = false)
+    private int repostCount;
 
     /** Soft delete keeps reply threads intact. */
     @Column(nullable = false)
