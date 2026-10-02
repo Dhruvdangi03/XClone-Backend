@@ -18,6 +18,8 @@ import com.project.Xclone_backend.follow.FollowRepository;
 import com.project.Xclone_backend.bookmark.BookmarkRepository;
 import com.project.Xclone_backend.like.LikeRepository;
 import com.project.Xclone_backend.media.MediaService;
+import com.project.Xclone_backend.notification.NotificationService;
+import com.project.Xclone_backend.notification.NotificationType;
 import com.project.Xclone_backend.post.PostRepository;
 import com.project.Xclone_backend.report.ReportReason;
 import com.project.Xclone_backend.report.UserReportRepository;
@@ -49,6 +51,7 @@ public class UserService {
     private final PostRepository postRepository;
     private final LikeRepository likeRepository;
     private final BookmarkRepository bookmarkRepository;
+    private final NotificationService notificationService;
 
     public User requireByUsername(String username) {
         return userRepository.findByUsername(username.toLowerCase(Locale.ROOT))
@@ -152,6 +155,7 @@ public class UserService {
         likeRepository.deleteAllByUser(userId);
         bookmarkRepository.deleteAllByUser(userId);
         followRepository.deleteAllInvolving(userId);
+        notificationService.removeAllInvolving(userId);
         refreshTokenRepository.deleteAllForUser(userId);
         postRepository.deleteHashtagLinksForAuthor(userId);
         postRepository.deleteMentionLinksInvolving(userId);
@@ -203,7 +207,9 @@ public class UserService {
             throw ApiException.badRequest("You cannot follow yourself");
         }
         requireNotBlocked(followerId, target.getId());
-        followRepository.follow(followerId, target.getId());
+        if (followRepository.follow(followerId, target.getId()) > 0) {
+            notificationService.notify(target, requireById(followerId), NotificationType.FOLLOW, null);
+        }
     }
 
     /** Only records the report; the reported user is not changed in any way. */
@@ -222,6 +228,7 @@ public class UserService {
     public void unfollow(Long followerId, String username) {
         User target = requireByUsername(username);
         followRepository.unfollow(followerId, target.getId());
+        notificationService.removeFollow(followerId, target.getId());
     }
 
     /** Blocking also removes any follow between the two users, in both directions. */
@@ -234,6 +241,8 @@ public class UserService {
         blockRepository.block(blockerId, target.getId());
         followRepository.unfollow(blockerId, target.getId());
         followRepository.unfollow(target.getId(), blockerId);
+        notificationService.removeFollow(blockerId, target.getId());
+        notificationService.removeFollow(target.getId(), blockerId);
     }
 
     @Transactional
