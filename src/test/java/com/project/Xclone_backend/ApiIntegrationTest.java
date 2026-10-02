@@ -1343,7 +1343,86 @@ class ApiIntegrationTest {
         mvc.perform(auth(get(url), bob)).andExpect(status().isUnauthorized());
     }
 
+    @Test
+    void unreadMessages() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        Account carol = register();
+        long ab = createConversation(alice, bob);
+        long cb = createConversation(carol, bob);
+        long ac = createConversation(alice, carol);
+        String abUrl = "/api/conversations/" + ab;
+
+        // Authentication is required on every new endpoint.
+        mvc.perform(get(abUrl + "/unread-count")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/conversations/unread-count")).andExpect(status().isUnauthorized());
+        mvc.perform(post(abUrl + "/read")).andExpect(status().isUnauthorized());
+
+        // Zero unread to start with.
+        assertUnread(abUrl + "/unread-count", bob, 0);
+        assertUnread("/api/conversations/unread-count", bob, 0);
+
+        // A new message is unread for the recipient only.
+        sendMessage(alice, ab, "one");
+        assertEquals(1, jdbc.queryForObject("select count(*) from messages where conversation_id = ? and read_at is null",
+                Integer.class, ab));
+        assertUnread(abUrl + "/unread-count", bob, 1);
+        assertUnread(abUrl + "/unread-count", alice, 0);
+        assertUnread("/api/conversations/unread-count", alice, 0);
+
+        // Multiple unread, in both directions.
+        sendMessage(alice, ab, "two");
+        sendMessage(alice, ab, "three");
+        sendMessage(bob, ab, "reply");
+        assertUnread(abUrl + "/unread-count", bob, 3);
+        assertUnread(abUrl + "/unread-count", alice, 1);
+
+        // Total spans only my conversations; the unrelated alice-carol chat never counts for bob.
+        sendMessage(carol, cb, "hey bob");
+        sendMessage(alice, ac, "hey carol");
+        assertUnread("/api/conversations/unread-count", bob, 4);
+        assertUnread("/api/conversations/unread-count", alice, 1);
+        assertUnread("/api/conversations/unread-count", carol, 1);
+
+        // Non-participants and unknown conversations.
+        mvc.perform(auth(get(abUrl + "/unread-count"), carol)).andExpect(status().isNotFound());
+        mvc.perform(auth(post(abUrl + "/read"), carol)).andExpect(status().isNotFound());
+        mvc.perform(auth(get("/api/conversations/999999999/unread-count"), bob)).andExpect(status().isNotFound());
+        mvc.perform(auth(post("/api/conversations/999999999/read"), bob)).andExpect(status().isNotFound());
+        assertUnread(abUrl + "/unread-count", bob, 3);
+
+        // Marking read only affects the other side's messages in that conversation, and is idempotent.
+        mvc.perform(auth(post(abUrl + "/read"), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(post(abUrl + "/read"), bob)).andExpect(status().isNoContent());
+        assertUnread(abUrl + "/unread-count", bob, 0);
+        assertUnread(abUrl + "/unread-count", alice, 1);
+        assertUnread("/api/conversations/unread-count", bob, 1);
+        assertEquals(3, jdbc.queryForObject(
+                "select count(*) from messages where conversation_id = ? and sender_id = ? and read_at is not null",
+                Integer.class, ab, alice.id()));
+        assertEquals(1, jdbc.queryForObject(
+                "select count(*) from messages where conversation_id = ? and sender_id = ? and read_at is null",
+                Integer.class, ab, bob.id()));
+
+        // Blocked pairs: no access and excluded from the total; restored after unblocking.
+        mvc.perform(auth(post("/api/users/" + bob.username() + "/block"), carol)).andExpect(status().isNoContent());
+        assertUnread("/api/conversations/unread-count", bob, 0);
+        mvc.perform(auth(get("/api/conversations/" + cb + "/unread-count"), bob)).andExpect(status().isForbidden());
+        mvc.perform(auth(post("/api/conversations/" + cb + "/read"), bob)).andExpect(status().isForbidden());
+        mvc.perform(auth(delete("/api/users/" + bob.username() + "/block"), carol)).andExpect(status().isNoContent());
+        assertUnread("/api/conversations/unread-count", bob, 1);
+    }
+
     // --- helpers ---
+
+    private void sendMessage(Account from, long conversationId, String content) throws Exception {
+        mvc.perform(json(auth(post("/api/conversations/" + conversationId + "/messages"), from), msgBody(content)))
+                .andExpect(status().isCreated());
+    }
+
+    private void assertUnread(String url, Account who, int expected) throws Exception {
+        mvc.perform(auth(get(url), who)).andExpect(status().isOk()).andExpect(jsonPath("$.count").value(expected));
+    }
 
     private long createConversation(Account a, Account b) throws Exception {
         String res = mvc.perform(json(auth(post("/api/conversations"), a), convBody(b.username())))

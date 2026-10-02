@@ -14,6 +14,7 @@ import com.project.Xclone_backend.conversation.Conversation;
 import com.project.Xclone_backend.conversation.ConversationRepository;
 import com.project.Xclone_backend.conversation.ConversationService;
 import com.project.Xclone_backend.message.MessageDtos.MessageResponse;
+import com.project.Xclone_backend.message.MessageDtos.UnreadCountResponse;
 import com.project.Xclone_backend.user.UserMapper;
 import com.project.Xclone_backend.user.UserService;
 
@@ -56,6 +57,24 @@ public class MessageService {
                     Collections.reverse(l);
                     return l;
                 })));
+    }
+
+    @Transactional(readOnly = true)
+    public UnreadCountResponse unreadCount(Long meId, Long conversationId) {
+        conversationService.requireAccessible(meId, conversationId);
+        return new UnreadCountResponse(messageRepository.countUnread(conversationId, meId));
+    }
+
+    @Transactional(readOnly = true)
+    public UnreadCountResponse totalUnreadCount(Long meId) {
+        return new UnreadCountResponse(messageRepository.countUnreadTotal(meId));
+    }
+
+    /** Idempotent; marks the other participant's messages as read. */
+    @Transactional
+    public void markRead(Long meId, Long conversationId) {
+        conversationService.requireAccessible(meId, conversationId);
+        messageRepository.markRead(conversationId, meId, Instant.now());
     }
 
     private MessageResponse toResponse(Message m) {
