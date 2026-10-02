@@ -8,6 +8,8 @@ import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.project.Xclone_backend.bookmark.Bookmark;
+import com.project.Xclone_backend.bookmark.BookmarkRepository;
 import com.project.Xclone_backend.common.ApiException;
 import com.project.Xclone_backend.common.CursorPage;
 import com.project.Xclone_backend.hashtag.Hashtag;
@@ -39,6 +41,7 @@ public class PostService {
     private final MediaService mediaService;
     private final HashtagService hashtagService;
     private final PostReportRepository postReportRepository;
+    private final BookmarkRepository bookmarkRepository;
 
     @Transactional
     public PostResponse create(Long authorId, CreatePostRequest req) {
@@ -147,6 +150,29 @@ public class PostService {
         if (likeRepository.unlike(userId, postId) > 0) {
             postRepository.addToLikeCount(postId, -1);
         }
+    }
+
+    @Transactional
+    public void bookmark(Long postId, Long userId) {
+        requireLive(postId);
+        if (bookmarkRepository.bookmark(userId, postId) == 0) {
+            throw ApiException.conflict("You have already bookmarked this post");
+        }
+    }
+
+    @Transactional
+    public void unbookmark(Long postId, Long userId) {
+        requireLive(postId);
+        bookmarkRepository.unbookmark(userId, postId);
+    }
+
+    /** Cursor here is the bookmark id, so paging follows "most recently bookmarked" order. */
+    @Transactional(readOnly = true)
+    public CursorPage<PostResponse> bookmarks(Long userId, Long cursor, Integer limit) {
+        int n = CursorPage.clampLimit(limit);
+        List<Bookmark> rows = bookmarkRepository.findUserBookmarks(userId, CursorPage.cursorOrMax(cursor), Limit.of(n + 1));
+        return CursorPage.of(rows, n, Bookmark::getId,
+                page -> postMapper.toResponses(page.stream().map(Bookmark::getPost).toList(), userId));
     }
 
     @Transactional(readOnly = true)

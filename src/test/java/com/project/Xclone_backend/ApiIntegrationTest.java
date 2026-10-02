@@ -665,6 +665,88 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void bookmarks() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        long p1 = createPost(alice, "{\"content\":\"first\"}");
+        long p2 = createPost(alice, "{\"content\":\"second\"}");
+        long p3 = createPost(alice, "{\"content\":\"third\"}");
+
+        // Authentication is required.
+        mvc.perform(post("/api/posts/" + p1 + "/bookmark")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/bookmarks")).andExpect(status().isUnauthorized());
+
+        // Create, and a duplicate is rejected (also enforced by the unique constraint).
+        mvc.perform(auth(post("/api/posts/" + p1 + "/bookmark"), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(post("/api/posts/" + p1 + "/bookmark"), bob)).andExpect(status().isConflict());
+        mvc.perform(auth(post("/api/posts/" + p2 + "/bookmark"), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(post("/api/posts/" + p3 + "/bookmark"), bob)).andExpect(status().isNoContent());
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select count(*) from bookmarks where user_id = ? and post_id = ?", Long.class, bob.id(), p1)).isEqualTo(1L);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.update(
+                "insert into bookmarks (user_id, post_id, created_at) values (?, ?, now())", bob.id(), p1))
+                .isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
+
+        // Bookmarking does not change the post or show up for other users.
+        mvc.perform(get("/api/posts/" + p1)).andExpect(jsonPath("$.content").value("first"));
+        mvc.perform(auth(get("/api/bookmarks"), alice)).andExpect(jsonPath("$.items", hasSize(0)));
+
+        // Listing: most recently bookmarked first, cursor paged.
+        String page1 = mvc.perform(auth(get("/api/bookmarks").param("limit", "2"), bob))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items", hasSize(2)))
+                .andExpect(jsonPath("$.items[0].id").value(p3))
+                .andExpect(jsonPath("$.items[1].id").value(p2))
+                .andExpect(jsonPath("$.items[0].author.id").value(alice.id()))
+                .andReturn().getResponse().getContentAsString();
+        String next = String.valueOf(((Number) JsonPath.read(page1, "$.nextCursor")).longValue());
+        mvc.perform(auth(get("/api/bookmarks").param("limit", "2").param("cursor", next), bob))
+                .andExpect(jsonPath("$.items", hasSize(1)))
+                .andExpect(jsonPath("$.items[0].id").value(p1))
+                .andExpect(jsonPath("$.nextCursor").value(nullValue()));
+
+        // Remove; removing again is harmless, and the post leaves the list.
+        mvc.perform(auth(delete("/api/posts/" + p2 + "/bookmark"), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(delete("/api/posts/" + p2 + "/bookmark"), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/bookmarks"), bob))
+                .andExpect(jsonPath("$.items", hasSize(2)))
+                .andExpect(jsonPath("$.items[0].id").value(p3))
+                .andExpect(jsonPath("$.items[1].id").value(p1));
+        mvc.perform(get("/api/posts/" + p2)).andExpect(status().isOk());
+
+        // A deleted post drops out of the list and can no longer be bookmarked.
+        mvc.perform(auth(delete("/api/posts/" + p3), alice)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/bookmarks"), bob)).andExpect(jsonPath("$.items", hasSize(1)));
+        mvc.perform(auth(post("/api/posts/" + p3 + "/bookmark"), bob)).andExpect(status().isNotFound());
+
+        // Nonexistent posts, and repost rows, are 404.
+        mvc.perform(auth(post("/api/posts/999999999/bookmark"), bob)).andExpect(status().isNotFound());
+        mvc.perform(auth(delete("/api/posts/999999999/bookmark"), bob)).andExpect(status().isNotFound());
+        mvc.perform(auth(post("/api/posts/" + p1 + "/repost"), bob)).andExpect(status().isNoContent());
+        Long repostRowId = jdbc.queryForObject("select id from posts where author_id = ? and repost_of_id = ?",
+                Long.class, bob.id(), p1);
+        mvc.perform(auth(post("/api/posts/" + repostRowId + "/bookmark"), bob)).andExpect(status().isNotFound());
+
+        // A deactivated user cannot use bookmarks with an old token.
+        mvc.perform(auth(post("/api/users/me/deactivate"), bob)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/bookmarks"), bob)).andExpect(status().isUnauthorized());
+        mvc.perform(auth(post("/api/posts/" + p1 + "/bookmark"), bob)).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void deletingAnAccountRemovesItsBookmarks() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        long postId = createPost(alice, "{\"content\":\"keep\"}");
+        mvc.perform(auth(post("/api/posts/" + postId + "/bookmark"), bob)).andExpect(status().isNoContent());
+        mvc.perform(json(auth(delete("/api/users/me"), bob), "{\"password\":\"password123\"}"))
+                .andExpect(status().isNoContent());
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select count(*) from bookmarks where user_id = ?", Long.class, bob.id())).isZero();
+        mvc.perform(get("/api/posts/" + postId)).andExpect(status().isOk());
+    }
+
+    @Test
     void followAndTimelinePaging() throws Exception {
         Account alice = register();
         Account bob = register();

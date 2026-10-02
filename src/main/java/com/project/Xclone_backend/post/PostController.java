@@ -79,6 +79,24 @@ public class PostController {
         postService.unrepost(id, me.id());
     }
 
+    @PostMapping("/posts/{id}/bookmark")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void bookmark(@PathVariable Long id, @AuthenticationPrincipal AuthUser me) {
+        postService.bookmark(id, me.id());
+    }
+
+    @DeleteMapping("/posts/{id}/bookmark")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void unbookmark(@PathVariable Long id, @AuthenticationPrincipal AuthUser me) {
+        postService.unbookmark(id, me.id());
+    }
+
+    @GetMapping("/bookmarks")
+    public CursorPage<PostResponse> bookmarks(@AuthenticationPrincipal AuthUser me,
+            @RequestParam(required = false) Long cursor, @RequestParam(required = false) Integer limit) {
+        return postService.bookmarks(me.id(), cursor, limit);
+    }
+
     @PostMapping("/posts/{id}/like")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void like(@PathVariable Long id, @AuthenticationPrincipal AuthUser me) {
