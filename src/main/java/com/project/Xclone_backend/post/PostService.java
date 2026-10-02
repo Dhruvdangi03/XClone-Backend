@@ -55,6 +55,12 @@ public class PostService {
         mediaKeys.forEach(post::addMedia);
         syncHashtags(post);
 
+        if (req.quotedPostId() != null) {
+            if (req.replyToId() != null) {
+                throw ApiException.badRequest("A post cannot be both a reply and a quote");
+            }
+            post.setQuoteOf(requireLive(req.quotedPostId()));
+        }
         if (req.replyToId() != null) {
             Post parent = requireLive(req.replyToId());
             userService.requireNotBlocked(authorId, parent.getAuthor().getId());

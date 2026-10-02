@@ -37,7 +37,8 @@ import lombok.Setter;
 @Table(name = "posts", indexes = {
         @Index(name = "idx_posts_author_id", columnList = "author_id, id"),
         @Index(name = "idx_posts_parent_id", columnList = "parent_id, id"),
-        @Index(name = "idx_posts_repost_of", columnList = "repost_of_id")},
+        @Index(name = "idx_posts_repost_of", columnList = "repost_of_id"),
+        @Index(name = "idx_posts_quote_of", columnList = "quote_of_id")},
         uniqueConstraints = @UniqueConstraint(name = "uk_posts_repost", columnNames = {"author_id", "repost_of_id"}))
 @Getter
 @Setter
@@ -70,6 +71,14 @@ public class Post {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "repost_of_id")
     private Post repostOf;
+
+    /**
+     * Non-null when this post quotes another. It is a normal post with its own text; the quoted post is never
+     * changed. Posts are only ever soft-deleted, so this reference cannot dangle.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "quote_of_id")
+    private Post quoteOf;
 
     @Column(nullable = false)
     private int likeCount;
