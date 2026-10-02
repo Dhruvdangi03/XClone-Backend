@@ -59,6 +59,14 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     @Modifying
     @Query("""
             delete from Notification n
+            where n.type = com.project.Xclone_backend.notification.NotificationType.REPOST
+              and n.actor.id = :actorId and n.post.id = :postId
+            """)
+    void deleteRepost(Long actorId, Long postId);
+
+    @Modifying
+    @Query("""
+            delete from Notification n
             where n.type = com.project.Xclone_backend.notification.NotificationType.FOLLOW
               and n.actor.id = :actorId and n.recipient.id = :recipientId
             """)

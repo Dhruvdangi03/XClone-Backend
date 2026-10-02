@@ -24,7 +24,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
- * {@code post} is the liked post (LIKE), the reply (REPLY), the mentioning post (MENTION) and null for FOLLOW.
+ * {@code post} is the liked post (LIKE), the reply (REPLY), the mentioning post (MENTION), the reposted original post (REPOST) and null for FOLLOW.
  */
 @Entity
 @Table(name = "notifications",
