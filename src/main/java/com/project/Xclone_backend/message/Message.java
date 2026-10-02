@@ -48,4 +48,7 @@ public class Message {
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
+
+    /** When the recipient read it; null means unread. */
+    private Instant readAt;
 }

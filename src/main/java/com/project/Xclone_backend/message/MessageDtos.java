@@ -18,4 +18,7 @@ public final class MessageDtos {
     public record MessageResponse(Long id, Long conversationId, UserSummary sender, String content,
             Instant createdAt) {
     }
+
+    public record UnreadCountResponse(long count) {
+    }
 }
