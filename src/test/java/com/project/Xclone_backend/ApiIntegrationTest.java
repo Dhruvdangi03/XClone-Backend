@@ -3,6 +3,8 @@ package com.project.Xclone_backend;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.nullValue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -18,6 +20,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -1110,7 +1113,130 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.avatarUrl").value("https://media.test/" + key));
     }
 
+    @Test
+    void conversations() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        Account carol = register();
+
+        // Authentication is required.
+        mvc.perform(json(post("/api/conversations"), convBody(bob.username()))).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/conversations")).andExpect(status().isUnauthorized());
+
+        // Create: shows the other participant, never the caller.
+        String created = mvc.perform(json(auth(post("/api/conversations"), alice), convBody(bob.username())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.participant.username").value(bob.username()))
+                .andExpect(jsonPath("$.participant.id").value(bob.id()))
+                .andExpect(jsonPath("$.createdAt").isNotEmpty())
+                .andExpect(jsonPath("$.updatedAt").isNotEmpty())
+                .andReturn().getResponse().getContentAsString();
+        long convId = ((Number) JsonPath.read(created, "$.id")).longValue();
+
+        // Get existing: same id, from either side, no duplicate row.
+        mvc.perform(json(auth(post("/api/conversations"), alice), convBody(bob.username())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(convId));
+        mvc.perform(json(auth(post("/api/conversations"), bob), convBody(alice.username())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(convId))
+                .andExpect(jsonPath("$.participant.username").value(alice.username()));
+        Integer rows = jdbc.queryForObject(
+                "select count(*) from conversations where user_one_id in (?, ?) and user_two_id in (?, ?)",
+                Integer.class, alice.id(), bob.id(), alice.id(), bob.id());
+        assertEquals(1, rows);
+
+        // The database itself rejects duplicates, reversed pairs and self-conversations.
+        long low = Math.min(alice.id(), bob.id());
+        long high = Math.max(alice.id(), bob.id());
+        String insert = "insert into conversations (user_one_id, user_two_id, created_at, updated_at) values (?, ?, now(), now())";
+        assertThrows(DataIntegrityViolationException.class, () -> jdbc.update(insert, low, high));
+        assertThrows(DataIntegrityViolationException.class, () -> jdbc.update(insert, high, low));
+        assertThrows(DataIntegrityViolationException.class, () -> jdbc.update(insert, low, low));
+
+        // Listing: only my conversations, newest first, paged.
+        mvc.perform(json(auth(post("/api/conversations"), alice), convBody(carol.username())))
+                .andExpect(status().isCreated());
+        mvc.perform(auth(get("/api/conversations"), alice))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[*].participant.username", contains(carol.username(), bob.username())));
+        mvc.perform(auth(get("/api/conversations"), bob))
+                .andExpect(jsonPath("$.items[*].participant.username", contains(alice.username())));
+        mvc.perform(auth(get("/api/conversations?limit=1"), alice))
+                .andExpect(jsonPath("$.items", hasSize(1)))
+                .andExpect(jsonPath("$.nextCursor").isNotEmpty());
+
+        // Only participants can open a conversation.
+        mvc.perform(auth(get("/api/conversations/" + convId), alice)).andExpect(status().isOk());
+        mvc.perform(auth(get("/api/conversations/" + convId), bob)).andExpect(status().isOk());
+        mvc.perform(auth(get("/api/conversations/" + convId), carol)).andExpect(status().isNotFound());
+        mvc.perform(auth(get("/api/conversations/999999999"), alice)).andExpect(status().isNotFound());
+
+        // Validation, unknown user and self.
+        mvc.perform(json(auth(post("/api/conversations"), alice), "{\"username\":\"\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(json(auth(post("/api/conversations"), alice), "{}")).andExpect(status().isBadRequest());
+        mvc.perform(json(auth(post("/api/conversations"), alice), convBody("nobody_here_1")))
+                .andExpect(status().isNotFound());
+        mvc.perform(json(auth(post("/api/conversations"), alice), convBody(alice.username())))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void conversationsAndBlocks() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        long convId = ((Number) JsonPath.read(mvc.perform(
+                json(auth(post("/api/conversations"), alice), convBody(bob.username())))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString(), "$.id")).longValue();
+
+        mvc.perform(auth(post("/api/users/" + bob.username() + "/block"), alice)).andExpect(status().isNoContent());
+
+        // Blocked in either direction: no new access, hidden from both lists.
+        mvc.perform(json(auth(post("/api/conversations"), alice), convBody(bob.username())))
+                .andExpect(status().isForbidden());
+        mvc.perform(json(auth(post("/api/conversations"), bob), convBody(alice.username())))
+                .andExpect(status().isForbidden());
+        mvc.perform(auth(get("/api/conversations/" + convId), bob)).andExpect(status().isForbidden());
+        mvc.perform(auth(get("/api/conversations"), alice)).andExpect(jsonPath("$.items", hasSize(0)));
+        mvc.perform(auth(get("/api/conversations"), bob)).andExpect(jsonPath("$.items", hasSize(0)));
+
+        // A new conversation with a blocked user is never created.
+        Account carol = register();
+        mvc.perform(auth(post("/api/users/" + carol.username() + "/block"), bob)).andExpect(status().isNoContent());
+        mvc.perform(json(auth(post("/api/conversations"), carol), convBody(bob.username())))
+                .andExpect(status().isForbidden());
+
+        // Unblocking restores the same conversation.
+        mvc.perform(auth(delete("/api/users/" + bob.username() + "/block"), alice)).andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/conversations"), alice))
+                .andExpect(jsonPath("$.items[*].id", contains((int) convId)));
+    }
+
+    @Test
+    void conversationsAndDeactivatedUsers() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        Account carol = register();
+        mvc.perform(json(auth(post("/api/conversations"), alice), convBody(bob.username())))
+                .andExpect(status().isCreated());
+
+        mvc.perform(auth(post("/api/users/me/deactivate"), bob)).andExpect(status().isNoContent());
+
+        // The deactivated user's token stops working; others cannot message them or see the conversation.
+        mvc.perform(auth(get("/api/conversations"), bob)).andExpect(status().isUnauthorized());
+        mvc.perform(json(auth(post("/api/conversations"), alice), convBody(bob.username())))
+                .andExpect(status().isForbidden());
+        mvc.perform(json(auth(post("/api/conversations"), carol), convBody(bob.username())))
+                .andExpect(status().isForbidden());
+        mvc.perform(auth(get("/api/conversations"), alice)).andExpect(jsonPath("$.items", hasSize(0)));
+    }
+
     // --- helpers ---
+
+    private static String convBody(String username) {
+        return "{\"username\":\"" + username + "\"}";
+    }
 
     private Account register() throws Exception {
         String username = "u" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
