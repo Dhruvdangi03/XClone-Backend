@@ -51,10 +51,15 @@ public class ConversationService {
     /** Non-participants get a 404 so the existence of other users' conversations is not revealed. */
     @Transactional(readOnly = true)
     public ConversationResponse get(Long meId, Long id) {
+        return toResponse(requireAccessible(meId, id), meId);
+    }
+
+    /** The caller must participate (else 404) and the other participant must be reachable (else 403). */
+    public Conversation requireAccessible(Long meId, Long id) {
         Conversation c = conversationRepository.findByIdAndParticipant(id, meId)
                 .orElseThrow(() -> ApiException.notFound("Conversation not found"));
         requireMessageable(meId, other(c, meId));
-        return toResponse(c, meId);
+        return c;
     }
 
     private void requireMessageable(Long meId, User other) {

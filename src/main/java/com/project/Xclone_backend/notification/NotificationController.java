@@ -41,7 +41,6 @@ public class NotificationController {
     public void markAllRead(@AuthenticationPrincipal AuthUser me) {
         notificationService.markAllRead(me.id());
     }
-
     @PostMapping("/{id}/read")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void markRead(@PathVariable Long id, @AuthenticationPrincipal AuthUser me) {

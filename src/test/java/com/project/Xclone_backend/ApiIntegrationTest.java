@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -14,6 +15,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -1232,7 +1234,131 @@ class ApiIntegrationTest {
         mvc.perform(auth(get("/api/conversations"), alice)).andExpect(jsonPath("$.items", hasSize(0)));
     }
 
+    @Test
+    void messages() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        Account carol = register();
+        long convId = createConversation(alice, bob);
+        String url = "/api/conversations/" + convId + "/messages";
+
+        // Authentication is required.
+        mvc.perform(json(post(url), msgBody("hi"))).andExpect(status().isUnauthorized());
+        mvc.perform(get(url)).andExpect(status().isUnauthorized());
+
+        Instant before = jdbcUpdatedAt(convId);
+
+        // Send: sender is the caller, content is stripped.
+        mvc.perform(json(auth(post(url), alice), msgBody("  hello bob  ")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").isNumber())
+                .andExpect(jsonPath("$.conversationId").value(convId))
+                .andExpect(jsonPath("$.sender.username").value(alice.username()))
+                .andExpect(jsonPath("$.content").value("hello bob"))
+                .andExpect(jsonPath("$.createdAt").isNotEmpty());
+        mvc.perform(json(auth(post(url), bob), msgBody("hi alice"))).andExpect(status().isCreated())
+                .andExpect(jsonPath("$.sender.username").value(bob.username()));
+        assertTrue(jdbcUpdatedAt(convId).isAfter(before));
+
+        // Both participants see both messages, oldest first.
+        for (Account who : List.of(alice, bob)) {
+            mvc.perform(auth(get(url), who))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.items[*].content", contains("hello bob", "hi alice")))
+                    .andExpect(jsonPath("$.nextCursor").value(nullValue()));
+        }
+
+        // Non-participants and unknown conversations get 404; nothing is stored.
+        mvc.perform(auth(get(url), carol)).andExpect(status().isNotFound());
+        mvc.perform(json(auth(post(url), carol), msgBody("intruder"))).andExpect(status().isNotFound());
+        mvc.perform(auth(get("/api/conversations/999999999/messages"), alice)).andExpect(status().isNotFound());
+        mvc.perform(json(auth(post("/api/conversations/999999999/messages"), alice), msgBody("x")))
+                .andExpect(status().isNotFound());
+        assertEquals(2, jdbc.queryForObject("select count(*) from messages where conversation_id = ?",
+                Integer.class, convId));
+
+        // Validation.
+        mvc.perform(json(auth(post(url), alice), msgBody(""))).andExpect(status().isBadRequest());
+        mvc.perform(json(auth(post(url), alice), msgBody("   \n "))).andExpect(status().isBadRequest());
+        mvc.perform(json(auth(post(url), alice), "{}")).andExpect(status().isBadRequest());
+        mvc.perform(json(auth(post(url), alice), msgBody("a".repeat(2000)))).andExpect(status().isCreated());
+        mvc.perform(json(auth(post(url), alice), msgBody("a".repeat(2001)))).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void messagePagination() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        long convId = createConversation(alice, bob);
+        String url = "/api/conversations/" + convId + "/messages";
+        for (int i = 1; i <= 5; i++) {
+            mvc.perform(json(auth(post(url), i % 2 == 0 ? bob : alice), msgBody("m" + i)))
+                    .andExpect(status().isCreated());
+        }
+
+        // Newest page first, each page oldest to newest; the cursor walks back in time.
+        String p1 = mvc.perform(auth(get(url + "?limit=2"), alice))
+                .andExpect(jsonPath("$.items[*].content", contains("m4", "m5")))
+                .andReturn().getResponse().getContentAsString();
+        Number c1 = JsonPath.read(p1, "$.nextCursor");
+        String p2 = mvc.perform(auth(get(url + "?limit=2&cursor=" + c1), alice))
+                .andExpect(jsonPath("$.items[*].content", contains("m2", "m3")))
+                .andReturn().getResponse().getContentAsString();
+        Number c2 = JsonPath.read(p2, "$.nextCursor");
+        mvc.perform(auth(get(url + "?limit=2&cursor=" + c2), alice))
+                .andExpect(jsonPath("$.items[*].content", contains("m1")))
+                .andExpect(jsonPath("$.nextCursor").value(nullValue()));
+
+        // Default and clamped limits, and a cursor before everything.
+        mvc.perform(auth(get(url), alice)).andExpect(jsonPath("$.items", hasSize(5)));
+        mvc.perform(auth(get(url + "?limit=1000"), alice)).andExpect(jsonPath("$.items", hasSize(5)));
+        mvc.perform(auth(get(url + "?cursor=1"), alice)).andExpect(jsonPath("$.items", hasSize(0)));
+    }
+
+    @Test
+    void messagesAndBlocksAndDeactivation() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        long convId = createConversation(alice, bob);
+        String url = "/api/conversations/" + convId + "/messages";
+        mvc.perform(json(auth(post(url), alice), msgBody("before"))).andExpect(status().isCreated());
+
+        // Blocked either way: no sending or reading.
+        mvc.perform(auth(post("/api/users/" + bob.username() + "/block"), alice)).andExpect(status().isNoContent());
+        mvc.perform(json(auth(post(url), alice), msgBody("x"))).andExpect(status().isForbidden());
+        mvc.perform(json(auth(post(url), bob), msgBody("x"))).andExpect(status().isForbidden());
+        mvc.perform(auth(get(url), alice)).andExpect(status().isForbidden());
+        mvc.perform(auth(get(url), bob)).andExpect(status().isForbidden());
+
+        // Unblocking restores access and the history.
+        mvc.perform(auth(delete("/api/users/" + bob.username() + "/block"), alice)).andExpect(status().isNoContent());
+        mvc.perform(json(auth(post(url), bob), msgBody("after"))).andExpect(status().isCreated());
+        mvc.perform(auth(get(url), alice))
+                .andExpect(jsonPath("$.items[*].content", contains("before", "after")));
+
+        // Deactivated counterpart: cannot be messaged; their own token stops working.
+        mvc.perform(auth(post("/api/users/me/deactivate"), bob)).andExpect(status().isNoContent());
+        mvc.perform(json(auth(post(url), alice), msgBody("anyone?"))).andExpect(status().isForbidden());
+        mvc.perform(json(auth(post(url), bob), msgBody("x"))).andExpect(status().isUnauthorized());
+        mvc.perform(auth(get(url), bob)).andExpect(status().isUnauthorized());
+    }
+
     // --- helpers ---
+
+    private long createConversation(Account a, Account b) throws Exception {
+        String res = mvc.perform(json(auth(post("/api/conversations"), a), convBody(b.username())))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        return ((Number) JsonPath.read(res, "$.id")).longValue();
+    }
+
+    private Instant jdbcUpdatedAt(long conversationId) {
+        return jdbc.queryForObject("select updated_at from conversations where id = ?", Instant.class,
+                conversationId);
+    }
+
+    private static String msgBody(String content) {
+        return "{\"content\":\"" + content.replace("\n", "\\n") + "\"}";
+    }
 
     private static String convBody(String username) {
         return "{\"username\":\"" + username + "\"}";
