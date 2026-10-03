@@ -1,5 +1,7 @@
 package com.project.Xclone_backend.post;
 
+import java.util.List;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -15,8 +17,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.project.Xclone_backend.common.CursorPage;
 import com.project.Xclone_backend.post.PostDtos.CreatePostRequest;
+import com.project.Xclone_backend.post.PostDtos.CreateThreadRequest;
 import com.project.Xclone_backend.post.PostDtos.PostResponse;
 import com.project.Xclone_backend.post.PostDtos.UpdatePostRequest;
+import com.project.Xclone_backend.post.PostDtos.UpdateReplyPolicyRequest;
 import com.project.Xclone_backend.report.ReportDtos.ReportRequest;
 import com.project.Xclone_backend.security.AuthUser;
 import com.project.Xclone_backend.user.UserDtos.UserSummary;
@@ -37,6 +41,13 @@ public class PostController {
         return postService.create(me.id(), req);
     }
 
+    @PostMapping("/posts/thread")
+    @ResponseStatus(HttpStatus.CREATED)
+    public List<PostResponse> createThread(@AuthenticationPrincipal AuthUser me,
+            @Valid @RequestBody CreateThreadRequest req) {
+        return postService.createThread(me.id(), req);
+    }
+
     @GetMapping("/posts/search")
     public CursorPage<PostResponse> search(@RequestParam(required = false) String q,
             @AuthenticationPrincipal AuthUser me, @RequestParam(required = false) Long cursor,
@@ -53,6 +64,17 @@ public class PostController {
     public PostResponse update(@PathVariable Long id, @AuthenticationPrincipal AuthUser me,
             @Valid @RequestBody UpdatePostRequest req) {
         return postService.update(id, me.id(), req);
+    }
+
+    @PatchMapping("/posts/{id}/reply-policy")
+    public PostResponse updateReplyPolicy(@PathVariable Long id, @AuthenticationPrincipal AuthUser me,
+            @Valid @RequestBody UpdateReplyPolicyRequest req) {
+        return postService.updateReplyPolicy(id, me.id(), req.replyPolicy());
+    }
+
+    @GetMapping("/posts/{id}/thread")
+    public List<PostResponse> thread(@PathVariable Long id, @AuthenticationPrincipal AuthUser me) {
+        return postService.thread(id, idOf(me));
     }
 
     @DeleteMapping("/posts/{id}")

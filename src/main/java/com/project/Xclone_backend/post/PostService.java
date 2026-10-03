@@ -1,5 +1,7 @@
 package com.project.Xclone_backend.post;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -14,6 +16,7 @@ import com.project.Xclone_backend.bookmark.Bookmark;
 import com.project.Xclone_backend.bookmark.BookmarkRepository;
 import com.project.Xclone_backend.common.ApiException;
 import com.project.Xclone_backend.common.CursorPage;
+import com.project.Xclone_backend.follow.FollowRepository;
 import com.project.Xclone_backend.hashtag.Hashtag;
 import com.project.Xclone_backend.hashtag.HashtagService;
 import com.project.Xclone_backend.like.LikeRepository;
@@ -23,6 +26,7 @@ import com.project.Xclone_backend.mention.MentionService;
 import com.project.Xclone_backend.notification.NotificationService;
 import com.project.Xclone_backend.notification.NotificationType;
 import com.project.Xclone_backend.post.PostDtos.CreatePostRequest;
+import com.project.Xclone_backend.post.PostDtos.CreateThreadRequest;
 import com.project.Xclone_backend.post.PostDtos.PostResponse;
 import com.project.Xclone_backend.post.PostDtos.UpdatePostRequest;
 import com.project.Xclone_backend.report.PostReportRepository;
@@ -52,6 +56,7 @@ public class PostService {
     private final BookmarkRepository bookmarkRepository;
     private final MentionService mentionService;
     private final NotificationService notificationService;
+    private final FollowRepository followRepository;
 
     @Transactional
     public PostResponse create(Long authorId, CreatePostRequest req) {
@@ -70,6 +75,12 @@ public class PostService {
         syncHashtags(post);
         syncMentions(post);
 
+        if (req.replyPolicy() != null && (req.replyToId() != null || req.quotedPostId() != null)) {
+            throw ApiException.badRequest("Only a top-level post can set who can reply");
+        }
+        if (req.replyPolicy() != null) {
+            post.setReplyPolicy(req.replyPolicy());
+        }
         if (req.quotedPostId() != null) {
             if (req.replyToId() != null) {
                 throw ApiException.badRequest("A post cannot be both a reply and a quote");
@@ -80,7 +91,10 @@ public class PostService {
         if (req.replyToId() != null) {
             parent = requireLive(req.replyToId());
             userService.requireNotBlocked(authorId, parent.getAuthor().getId());
+            Post root = parent.getRoot() != null ? parent.getRoot() : parent;
+            requireCanReply(root, authorId);
             post.setParent(parent);
+            post.setRoot(root);
             postRepository.addToReplyCount(parent.getId(), 1);
         }
         postRepository.save(post);
@@ -93,6 +107,62 @@ public class PostService {
             }
         }
         return postMapper.toResponse(post, authorId);
+    }
+
+    /** Creates the posts in order in one transaction: the first starts the thread, each later one replies to the previous. */
+    @Transactional
+    public List<PostResponse> createThread(Long authorId, CreateThreadRequest req) {
+        List<PostResponse> created = new ArrayList<>();
+        Long previousId = null;
+        for (CreatePostRequest item : req.posts()) {
+            if (item.replyToId() != null || item.quotedPostId() != null || item.replyPolicy() != null) {
+                throw ApiException.badRequest("Thread posts cannot set replyToId, quotedPostId or replyPolicy");
+            }
+            CreatePostRequest linked = new CreatePostRequest(item.content(), item.mediaKeys(), previousId, null,
+                    previousId == null ? req.replyPolicy() : null);
+            PostResponse response = create(authorId, linked);
+            created.add(response);
+            previousId = response.id();
+        }
+        return created;
+    }
+
+    /**
+     * The thread containing the post: the conversation's top-level post plus the author's own posts that chain from
+     * it through the author's own replies, oldest first. Replies by other people are not part of the thread.
+     */
+    @Transactional(readOnly = true)
+    public List<PostResponse> thread(Long postId, Long viewerId) {
+        Post post = requireLive(postId);
+        requireVisible(viewerId, post.getAuthor());
+        Post root = post.getRoot() != null ? post.getRoot() : post;
+        if (root.isDeleted()) {
+            throw ApiException.notFound("Post not found");
+        }
+        Long authorId = root.getAuthor().getId();
+        requireVisible(viewerId, root.getAuthor());
+        Set<Long> inThread = new HashSet<>(Set.of(root.getId()));
+        List<Post> chain = new ArrayList<>(List.of(root));
+        for (Post p : postRepository.findAuthorPostsInConversation(root.getId(), authorId)) {
+            if (inThread.contains(p.getParent().getId())) {
+                inThread.add(p.getId());
+                chain.add(p);
+            }
+        }
+        return postMapper.toResponses(chain, viewerId);
+    }
+
+    @Transactional
+    public PostResponse updateReplyPolicy(Long postId, Long userId, ReplyPolicy policy) {
+        Post post = requireLive(postId);
+        if (!post.getAuthor().getId().equals(userId)) {
+            throw ApiException.forbidden("You can only change who can reply to your own posts");
+        }
+        if (post.getParent() != null) {
+            throw ApiException.badRequest("Only a top-level post can set who can reply");
+        }
+        post.setReplyPolicy(policy);
+        return postMapper.toResponse(post, userId);
     }
 
     @Transactional(readOnly = true)
@@ -286,6 +356,22 @@ public class PostService {
         int n = CursorPage.clampLimit(limit);
         List<Post> rows = postRepository.findTimeline(userId, CursorPage.cursorOrMax(cursor), Limit.of(n + 1));
         return CursorPage.of(rows, n, Post::getId, page -> postMapper.toResponses(page, userId));
+    }
+
+    /** The author of the conversation can always reply; everyone else must satisfy the root post's policy. */
+    private void requireCanReply(Post root, Long replierId) {
+        Long rootAuthorId = root.getAuthor().getId();
+        if (rootAuthorId.equals(replierId)) {
+            return;
+        }
+        boolean allowed = switch (root.getReplyPolicy()) {
+            case EVERYONE -> true;
+            case FOLLOWING -> followRepository.existsByFollowerIdAndFolloweeId(rootAuthorId, replierId);
+            case MENTIONED -> root.getMentions().stream().anyMatch(u -> u.getId().equals(replierId));
+        };
+        if (!allowed) {
+            throw ApiException.forbidden("The author limits who can reply to this conversation");
+        }
     }
 
     private void requireVisible(Long viewerId, User user) {

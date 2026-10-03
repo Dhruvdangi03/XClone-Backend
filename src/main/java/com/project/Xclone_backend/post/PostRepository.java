@@ -20,6 +20,18 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     @Query("select p from Post p join fetch p.author where p.id in :ids and p.deleted = false")
     List<Post> findLiveByIds(Collection<Long> ids);
 
+    /** Conversation roots by id, deleted or not: a deleted top post must keep governing who may reply. */
+    @Query("select p from Post p join fetch p.author where p.id in :ids")
+    List<Post> findRootsByIds(Collection<Long> ids);
+
+    /** The author's live posts in one conversation, oldest first; the service keeps those that chain from the root. */
+    @Query("""
+            select p from Post p join fetch p.author
+            where p.root.id = :rootId and p.author.id = :authorId and p.deleted = false
+            order by p.id asc
+            """)
+    List<Post> findAuthorPostsInConversation(Long rootId, Long authorId);
+
     /** Top-level posts and reposts by one author, newest first. Reposts of deleted posts are skipped. */
     @Query("""
             select p from Post p join fetch p.author left join fetch p.repostOf o left join fetch o.author

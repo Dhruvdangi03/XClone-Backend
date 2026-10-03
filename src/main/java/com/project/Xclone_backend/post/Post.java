@@ -16,6 +16,8 @@ import com.project.Xclone_backend.user.User;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -39,6 +41,7 @@ import lombok.Setter;
         @Index(name = "idx_posts_parent_id", columnList = "parent_id, id"),
         @Index(name = "idx_posts_repost_of", columnList = "repost_of_id"),
         @Index(name = "idx_posts_quote_of", columnList = "quote_of_id"),
+        @Index(name = "idx_posts_root_id", columnList = "root_id, id"),
         @Index(name = "idx_posts_created_at", columnList = "created_at")},
         uniqueConstraints = @UniqueConstraint(name = "uk_posts_repost", columnNames = {"author_id", "repost_of_id"}))
 @Getter
@@ -64,6 +67,20 @@ public class Post {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "parent_id")
     private Post parent;
+
+    /**
+     * Top-level post of the conversation this reply belongs to; null for top-level posts and repost rows. Lets the
+     * conversation's reply policy be enforced at any depth without walking the parent chain.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "root_id")
+    private Post root;
+
+    /** Only meaningful on top-level posts; replies inherit their root's policy. */
+    @Enumerated(EnumType.STRING)
+    @ColumnDefault("'EVERYONE'")
+    @Column(nullable = false, length = 20)
+    private ReplyPolicy replyPolicy = ReplyPolicy.EVERYONE;
 
     /**
      * Non-null when this row is a repost: it has no content, media or parent of its own and is rendered as the

@@ -1469,6 +1469,129 @@ class ApiIntegrationTest {
         return "{\"refreshToken\":\"" + token + "\"}";
     }
 
+    @Test
+    void replyPolicyLimitsWhoCanReplyAtAnyDepth() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        Account carol = register();
+        mvc.perform(auth(post("/api/users/" + bob.username() + "/follow"), alice)).andExpect(status().isNoContent());
+
+        // FOLLOWING: only accounts alice follows (bob), plus alice herself.
+        long following = createPost(alice, "{\"content\":\"hi\",\"replyPolicy\":\"FOLLOWING\"}");
+        mvc.perform(auth(get("/api/posts/" + following), bob)).andExpect(jsonPath("$.canReply").value(true))
+                .andExpect(jsonPath("$.replyPolicy").value("FOLLOWING"))
+                .andExpect(jsonPath("$.conversationId").value(following));
+        mvc.perform(auth(get("/api/posts/" + following), carol)).andExpect(jsonPath("$.canReply").value(false));
+        mvc.perform(get("/api/posts/" + following)).andExpect(jsonPath("$.canReply").value(false));
+        long bobReply = createPost(bob, "{\"content\":\"ok\",\"replyToId\":" + following + "}");
+        mvc.perform(auth(post("/api/posts"), carol)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"content\":\"me too\",\"replyToId\":" + following + "}"))
+                .andExpect(status().isForbidden());
+        // The policy holds for a reply to a reply, and replies report the conversation they belong to.
+        mvc.perform(auth(post("/api/posts"), carol)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"content\":\"deep\",\"replyToId\":" + bobReply + "}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(auth(get("/api/posts/" + bobReply), carol)).andExpect(jsonPath("$.canReply").value(false))
+                .andExpect(jsonPath("$.conversationId").value(following));
+        createPost(alice, "{\"content\":\"alice again\",\"replyToId\":" + bobReply + "}");
+
+        // MENTIONED: only people @mentioned in the top-level post.
+        long mentioned = createPost(alice,
+                "{\"content\":\"@" + carol.username() + " look\",\"replyPolicy\":\"MENTIONED\"}");
+        createPost(carol, "{\"content\":\"seen\",\"replyToId\":" + mentioned + "}");
+        mvc.perform(auth(post("/api/posts"), bob)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"content\":\"hm\",\"replyToId\":" + mentioned + "}"))
+                .andExpect(status().isForbidden());
+
+        // Quoting is not a reply, so it is never limited.
+        createPost(bob, "{\"content\":\"quote\",\"quotedPostId\":" + mentioned + "}");
+    }
+
+    @Test
+    void replyPolicyCanOnlyBeSetOnTopLevelPostsByTheirAuthor() throws Exception {
+        Account alice = register();
+        Account bob = register();
+        long top = createPost(alice, "{\"content\":\"hi\"}");
+        long reply = createPost(bob, "{\"content\":\"yo\",\"replyToId\":" + top + "}");
+
+        mvc.perform(json(auth(post("/api/posts"), bob),
+                "{\"content\":\"x\",\"replyToId\":" + top + ",\"replyPolicy\":\"FOLLOWING\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(json(auth(post("/api/posts"), bob),
+                "{\"content\":\"x\",\"quotedPostId\":" + top + ",\"replyPolicy\":\"FOLLOWING\"}"))
+                .andExpect(status().isBadRequest());
+
+        mvc.perform(json(auth(patch("/api/posts/" + top + "/reply-policy"), bob), "{\"replyPolicy\":\"FOLLOWING\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(json(auth(patch("/api/posts/" + reply + "/reply-policy"), bob),
+                "{\"replyPolicy\":\"FOLLOWING\"}")).andExpect(status().isBadRequest());
+        mvc.perform(json(auth(patch("/api/posts/" + top + "/reply-policy"), alice), "{\"replyPolicy\":\"MENTIONED\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.replyPolicy").value("MENTIONED"));
+        // Applies to future replies only.
+        mvc.perform(json(auth(post("/api/posts"), bob), "{\"content\":\"late\",\"replyToId\":" + top + "}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/posts/" + reply)).andExpect(status().isOk());
+    }
+
+    @Test
+    void threadsChainTheAuthorsOwnPosts() throws Exception {
+        Account alice = register();
+        Account bob = register();
+
+        String created = mvc.perform(json(auth(post("/api/posts/thread"), alice),
+                "{\"posts\":[{\"content\":\"1/3\"},{\"content\":\"2/3\"},{\"content\":\"3/3\"}],"
+                        + "\"replyPolicy\":\"FOLLOWING\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$", hasSize(3)))
+                .andReturn().getResponse().getContentAsString();
+        long first = ((Number) JsonPath.read(created, "$[0].id")).longValue();
+        long second = ((Number) JsonPath.read(created, "$[1].id")).longValue();
+        long third = ((Number) JsonPath.read(created, "$[2].id")).longValue();
+        mvc.perform(get("/api/posts/" + third)).andExpect(jsonPath("$.replyToId").value(second))
+                .andExpect(jsonPath("$.conversationId").value(first))
+                .andExpect(jsonPath("$.replyPolicy").value("FOLLOWING"));
+
+        // A reply by someone else under the thread is not part of it, wherever it sits.
+        mvc.perform(auth(post("/api/users/" + bob.username() + "/follow"), alice)).andExpect(status().isNoContent());
+        long bobReply = createPost(bob, "{\"content\":\"nice\",\"replyToId\":" + second + "}");
+        mvc.perform(get("/api/posts/" + third + "/thread")).andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(3)))
+                .andExpect(jsonPath("$[0].id").value(first))
+                .andExpect(jsonPath("$[1].id").value(second))
+                .andExpect(jsonPath("$[2].id").value(third));
+        // Any post in the conversation, including another person's reply, resolves to the same thread.
+        mvc.perform(get("/api/posts/" + bobReply + "/thread")).andExpect(jsonPath("$", hasSize(3)));
+
+        // Deleting a middle post breaks the chain after it.
+        mvc.perform(auth(delete("/api/posts/" + second), alice)).andExpect(status().isNoContent());
+        mvc.perform(get("/api/posts/" + first + "/thread")).andExpect(jsonPath("$", hasSize(1)));
+
+        // Thread items cannot set their own links; a thread needs at least two posts.
+        mvc.perform(json(auth(post("/api/posts/thread"), alice),
+                "{\"posts\":[{\"content\":\"a\"},{\"content\":\"b\",\"replyToId\":" + first + "}]}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(json(auth(post("/api/posts/thread"), alice), "{\"posts\":[{\"content\":\"a\"}]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void backfillSetsRootOnRepliesCreatedBeforeConversationsWereTracked() throws Exception {
+        Account alice = register();
+        long top = createPost(alice, "{\"content\":\"top\"}");
+        long mid = createPost(alice, "{\"content\":\"mid\",\"replyToId\":" + top + "}");
+        long leaf = createPost(alice, "{\"content\":\"leaf\",\"replyToId\":" + mid + "}");
+        jdbc.update("update posts set root_id = null where id in (?, ?)", mid, leaf);
+
+        new com.project.Xclone_backend.post.PostRootBackfillInitializer(jdbc).run(null);
+
+        assertEquals(top, jdbc.queryForObject("select root_id from posts where id = ?", Long.class, mid));
+        assertEquals(top, jdbc.queryForObject("select root_id from posts where id = ?", Long.class, leaf));
+    }
+
     private static MockHttpServletRequestBuilder auth(MockHttpServletRequestBuilder req, Account account) {
         return req.header("Authorization", "Bearer " + account.accessToken());
     }
