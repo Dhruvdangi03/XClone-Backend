@@ -34,6 +34,8 @@ public class SecurityConfig {
                 .exceptionHandling(e -> e.authenticationEntryPoint(problemHandler).accessDeniedHandler(problemHandler))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**", "/error").permitAll()
+                        // The WebSocket handshake carries no Authorization header; STOMP CONNECT authenticates instead.
+                        .requestMatchers("/ws/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/users/me", "/api/users/me/blocks").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/users/**", "/api/posts/**", "/api/hashtags/**", "/api/trending/**").permitAll()
                         .anyRequest().authenticated())
