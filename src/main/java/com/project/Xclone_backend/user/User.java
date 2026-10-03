@@ -39,6 +39,11 @@ public class User {
     @Column(nullable = false)
     private String passwordHash;
 
+    /** The column default lets ddl-auto add this column to tables that already have rows: existing accounts count as verified. */
+    @ColumnDefault("true")
+    @Column(nullable = false)
+    private boolean emailVerified = true;
+
     @Column(nullable = false, length = 50)
     private String displayName;
 
