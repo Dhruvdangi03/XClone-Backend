@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +30,7 @@ public class MessageService {
     private final ConversationService conversationService;
     private final UserService userService;
     private final UserMapper userMapper;
+    private final ApplicationEventPublisher events;
 
     @Transactional
     public MessageResponse send(Long meId, Long conversationId, String content) {
@@ -39,7 +41,11 @@ public class MessageService {
         message.setContent(content.strip());
         messageRepository.save(message);
         conversationRepository.touch(conversationId, Instant.now());
-        return toResponse(message);
+        MessageResponse response = toResponse(message);
+        Long recipientId = conversation.getUserOne().getId().equals(meId)
+                ? conversation.getUserTwo().getId() : conversation.getUserOne().getId();
+        events.publishEvent(new MessageSentEvent(recipientId, response));
+        return response;
     }
 
     /**
