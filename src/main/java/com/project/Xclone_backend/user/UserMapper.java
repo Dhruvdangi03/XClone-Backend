@@ -16,8 +16,8 @@ public class UserMapper {
     private final R2Properties r2;
 
     public UserResponse toResponse(User u) {
-        return new UserResponse(u.getId(), u.getUsername(), u.getEmail(), u.getDisplayName(), u.getBio(),
-                r2.publicUrl(u.getAvatarKey()), r2.publicUrl(u.getBannerKey()), u.getCreatedAt());
+        return new UserResponse(u.getId(), u.getUsername(), u.getEmail(), u.isEmailVerified(),
+                u.getDisplayName(), u.getBio(), r2.publicUrl(u.getAvatarKey()), r2.publicUrl(u.getBannerKey()), u.getCreatedAt());
     }
 
     public UserSummary toSummary(User u) {

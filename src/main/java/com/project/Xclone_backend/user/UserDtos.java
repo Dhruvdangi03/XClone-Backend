@@ -13,8 +13,8 @@ public final class UserDtos {
     }
 
     /** Full user, returned for the current user and on auth. */
-    public record UserResponse(Long id, String username, String email, String displayName, String bio,
-            String avatarUrl, String bannerUrl, Instant createdAt) {
+    public record UserResponse(Long id, String username, String email, boolean emailVerified, String displayName,
+            String bio, String avatarUrl, String bannerUrl, Instant createdAt) {
     }
 
     /** Compact user embedded in posts and user lists. */

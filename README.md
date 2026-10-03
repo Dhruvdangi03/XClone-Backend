@@ -48,6 +48,10 @@ All endpoints are under `/api`. Send `Authorization: Bearer <accessToken>` for a
 | POST | `/auth/login` | – | `{usernameOrEmail, password}` |
 | POST | `/auth/refresh` | – | `{refreshToken}`; rotates the token, and reusing an old one revokes all sessions |
 | POST | `/auth/logout` | – | `{refreshToken}` |
+| POST | `/auth/verify-email` | – | `{token}` from the emailed link; 400 if invalid, expired or already used (204 on success) |
+| POST | `/users/me/verify-email` | ✓ | resend the verification email; 409 if already verified |
+| POST | `/auth/forgot-password` | – | `{email}`; always 204 so it can't be used to find accounts; emails a reset link (valid 1h) to active accounts |
+| POST | `/auth/reset-password` | – | `{token, newPassword}`; sets the password and signs out every session; 400 if invalid, expired or already used |
 | GET / PATCH | `/users/me` | ✓ | PATCH `{displayName?, bio?, avatarKey?, bannerKey?}`; `""` clears |
 | GET | `/users/search?q=` | – | prefix match on username / display name |
 | GET | `/users/me/blocks` | ✓ | users you blocked, paged |
@@ -72,3 +76,10 @@ All endpoints are under `/api`. Send `Authorization: Bearer <accessToken>` for a
 | POST | `/media/upload-url` | ✓ | see above |
 
 **Pagination.** Paged endpoints accept `?cursor=&limit=` (default 20, max 50) and return `{ items, nextCursor }`. Pass `nextCursor` back to get the next page; `null` means there are no more pages.
+
+## Email
+
+Registering and changing your email send a verification link (`emailVerified` in the user response; accounts that
+existed before this feature count as verified). Nothing is blocked for unverified users yet. Links point to
+`FRONTEND_URL/verify-email?token=…` and `FRONTEND_URL/reset-password?token=…`. Set `SPRING_MAIL_HOST` (plus
+`_PORT`, `_USERNAME`, `_PASSWORD`) to send real email; without it the app logs the email, link included, instead.

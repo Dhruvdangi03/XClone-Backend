@@ -38,6 +38,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final JwtProperties jwtProperties;
     private final UserMapper userMapper;
+    private final EmailTokenService emailTokenService;
 
     @Transactional
     public AuthResponse register(RegisterRequest req) {
@@ -54,8 +55,34 @@ public class AuthService {
         user.setEmail(email);
         user.setPasswordHash(passwordEncoder.encode(req.password()));
         user.setDisplayName(req.displayName().strip());
+        user.setEmailVerified(false);
         userRepository.save(user);
+        emailTokenService.sendVerification(user);
         return issueTokens(user);
+    }
+
+    @Transactional
+    public void verifyEmail(String rawToken) {
+        emailTokenService.consume(rawToken, EmailTokenType.VERIFY_EMAIL).setEmailVerified(true);
+    }
+
+    /** Silent when the email is unknown or the account is not active, so it cannot be used to probe for accounts. */
+    @Transactional
+    public void forgotPassword(String email) {
+        userRepository.findByEmail(email.strip().toLowerCase(Locale.ROOT))
+                .filter(u -> u.getStatus() == AccountStatus.ACTIVE)
+                .ifPresent(emailTokenService::sendPasswordReset);
+    }
+
+    /** Also signs out every session, like a password change. */
+    @Transactional
+    public void resetPassword(String rawToken, String newPassword) {
+        User user = emailTokenService.consume(rawToken, EmailTokenType.RESET_PASSWORD);
+        if (user.getStatus() != AccountStatus.ACTIVE) {
+            throw ApiException.badRequest("Invalid or expired token");
+        }
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        refreshTokenRepository.revokeAllForUser(user.getId());
     }
 
     @Transactional
@@ -113,7 +140,7 @@ public class AuthService {
         return new AuthResponse(access, raw, jwtService.accessTtlSeconds(), userMapper.toResponse(user));
     }
 
-    private static String hash(String raw) {
+    static String hash(String raw) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest);

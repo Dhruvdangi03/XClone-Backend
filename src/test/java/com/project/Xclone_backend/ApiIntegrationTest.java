@@ -7,6 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -20,6 +24,7 @@ import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -32,6 +37,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import com.jayway.jsonpath.JsonPath;
+import com.project.Xclone_backend.auth.EmailSender;
 import com.project.Xclone_backend.hashtag.HashtagRepository;
 import com.project.Xclone_backend.report.PostReportRepository;
 import com.project.Xclone_backend.report.UserReportRepository;
@@ -60,6 +66,9 @@ class ApiIntegrationTest {
 
     @Autowired
     JdbcTemplate jdbc;
+
+    @MockitoBean
+    EmailSender emailSender;
 
     @MockitoBean
     S3Client s3Client;
@@ -1590,6 +1599,111 @@ class ApiIntegrationTest {
 
         assertEquals(top, jdbc.queryForObject("select root_id from posts where id = ?", Long.class, mid));
         assertEquals(top, jdbc.queryForObject("select root_id from posts where id = ?", Long.class, leaf));
+    }
+
+    @Test
+    void emailVerificationFlow() throws Exception {
+        Account a = register();
+        String email = a.username() + "@example.com";
+        mvc.perform(auth(get("/api/users/me"), a)).andExpect(jsonPath("$.emailVerified").value(false));
+        String token = lastEmailedToken(email);
+
+        mvc.perform(json(post("/api/auth/verify-email"), "{\"token\":\"nope\"}")).andExpect(status().isBadRequest());
+        mvc.perform(json(post("/api/auth/verify-email"), "{\"token\":\"" + token + "\"}"))
+                .andExpect(status().isNoContent());
+        mvc.perform(auth(get("/api/users/me"), a)).andExpect(jsonPath("$.emailVerified").value(true));
+        // A token works once, and there is nothing to resend for a verified address.
+        mvc.perform(json(post("/api/auth/verify-email"), "{\"token\":\"" + token + "\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(auth(post("/api/users/me/verify-email"), a)).andExpect(status().isConflict());
+
+        // Changing to the same address keeps the status; a new address needs verifying again.
+        mvc.perform(json(auth(patch("/api/users/me/email"), a), "{\"email\":\"" + email + "\"}"))
+                .andExpect(jsonPath("$.emailVerified").value(true));
+        String newEmail = "new-" + a.username() + "@example.com";
+        mvc.perform(json(auth(patch("/api/users/me/email"), a), "{\"email\":\"" + newEmail + "\"}"))
+                .andExpect(jsonPath("$.emailVerified").value(false));
+        String newToken = lastEmailedToken(newEmail);
+        mvc.perform(auth(post("/api/users/me/verify-email"), a)).andExpect(status().isNoContent());
+        // The resend replaced the earlier token.
+        mvc.perform(json(post("/api/auth/verify-email"), "{\"token\":\"" + newToken + "\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(json(post("/api/auth/verify-email"), "{\"token\":\"" + lastEmailedToken(newEmail) + "\"}"))
+                .andExpect(status().isNoContent());
+        mvc.perform(post("/api/users/me/verify-email")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void passwordResetFlow() throws Exception {
+        Account a = register();
+        String email = a.username() + "@example.com";
+        org.mockito.Mockito.clearInvocations(emailSender);
+
+        // Always 204, but only a real active account is emailed.
+        mvc.perform(json(post("/api/auth/forgot-password"), "{\"email\":\"nobody-" + a.username() + "@example.com\"}"))
+                .andExpect(status().isNoContent());
+        verify(emailSender, never()).send(any(), any(), any());
+        mvc.perform(json(post("/api/auth/forgot-password"), "{\"email\":\"" + email.toUpperCase() + "\"}"))
+                .andExpect(status().isNoContent());
+        String first = lastEmailedToken(email);
+        mvc.perform(json(post("/api/auth/forgot-password"), "{\"email\":\"" + email + "\"}"))
+                .andExpect(status().isNoContent());
+        String token = lastEmailedToken(email);
+
+        // A newer reset token replaces the older one.
+        mvc.perform(json(post("/api/auth/reset-password"), resetBody(first, "brand-new-pass")))
+                .andExpect(status().isBadRequest());
+        mvc.perform(json(post("/api/auth/reset-password"), resetBody(token, "short"))).andExpect(status().isBadRequest());
+        mvc.perform(json(post("/api/auth/reset-password"), resetBody(token, "brand-new-pass")))
+                .andExpect(status().isNoContent());
+        mvc.perform(json(post("/api/auth/reset-password"), resetBody(token, "another-pass1")))
+                .andExpect(status().isBadRequest());
+
+        mvc.perform(json(post("/api/auth/login"),
+                "{\"usernameOrEmail\":\"" + a.username() + "\",\"password\":\"password123\"}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(json(post("/api/auth/login"),
+                "{\"usernameOrEmail\":\"" + a.username() + "\",\"password\":\"brand-new-pass\"}"))
+                .andExpect(status().isOk());
+        // Every earlier session is signed out.
+        mvc.perform(json(post("/api/auth/refresh"), refreshBody(a.refreshToken()))).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void expiredAndInactiveAccountResetsAreRejected() throws Exception {
+        Account a = register();
+        String email = a.username() + "@example.com";
+        mvc.perform(json(post("/api/auth/forgot-password"), "{\"email\":\"" + email + "\"}"))
+                .andExpect(status().isNoContent());
+        String token = lastEmailedToken(email);
+        jdbc.update("update email_tokens set expires_at = now() - interval '1 minute' where user_id = ?", a.id());
+        mvc.perform(json(post("/api/auth/reset-password"), resetBody(token, "brand-new-pass")))
+                .andExpect(status().isBadRequest());
+
+        // Deactivated accounts are not emailed and cannot redeem a token issued earlier.
+        mvc.perform(json(post("/api/auth/forgot-password"), "{\"email\":\"" + email + "\"}"))
+                .andExpect(status().isNoContent());
+        String live = lastEmailedToken(email);
+        mvc.perform(auth(post("/api/users/me/deactivate"), a)).andExpect(status().isNoContent());
+        org.mockito.Mockito.clearInvocations(emailSender);
+        mvc.perform(json(post("/api/auth/forgot-password"), "{\"email\":\"" + email + "\"}"))
+                .andExpect(status().isNoContent());
+        verify(emailSender, never()).send(any(), any(), any());
+        mvc.perform(json(post("/api/auth/reset-password"), resetBody(live, "brand-new-pass")))
+                .andExpect(status().isBadRequest());
+    }
+
+    private String lastEmailedToken(String email) {
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(emailSender, atLeastOnce()).send(eq(email), any(), body.capture());
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("token=([\\w-]+)")
+                .matcher(body.getAllValues().get(body.getAllValues().size() - 1));
+        assertTrue(m.find());
+        return m.group(1);
+    }
+
+    private static String resetBody(String token, String password) {
+        return "{\"token\":\"" + token + "\",\"newPassword\":\"" + password + "\"}";
     }
 
     private static MockHttpServletRequestBuilder auth(MockHttpServletRequestBuilder req, Account account) {

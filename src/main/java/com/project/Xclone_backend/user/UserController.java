@@ -58,6 +58,12 @@ public class UserController {
         return userService.changeEmail(me.id(), req);
     }
 
+    @PostMapping("/me/verify-email")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void resendEmailVerification(@AuthenticationPrincipal AuthUser me) {
+        userService.resendEmailVerification(me.id());
+    }
+
     @PatchMapping("/me/password")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void changePassword(@AuthenticationPrincipal AuthUser me, @Valid @RequestBody ChangePasswordRequest req) {

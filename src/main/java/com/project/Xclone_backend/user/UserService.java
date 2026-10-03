@@ -8,6 +8,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.project.Xclone_backend.auth.EmailTokenRepository;
+import com.project.Xclone_backend.auth.EmailTokenService;
 import com.project.Xclone_backend.auth.RefreshTokenRepository;
 import com.project.Xclone_backend.block.Block;
 import com.project.Xclone_backend.block.BlockRepository;
@@ -52,6 +54,8 @@ public class UserService {
     private final LikeRepository likeRepository;
     private final BookmarkRepository bookmarkRepository;
     private final NotificationService notificationService;
+    private final EmailTokenService emailTokenService;
+    private final EmailTokenRepository emailTokenRepository;
 
     public User requireByUsername(String username) {
         return userRepository.findByUsername(username.toLowerCase(Locale.ROOT))
@@ -119,8 +123,19 @@ public class UserService {
                 throw ApiException.conflict("Email is already registered");
             }
             user.setEmail(email);
+            user.setEmailVerified(false);
+            emailTokenService.sendVerification(user);
         }
         return userMapper.toResponse(user);
+    }
+
+    @Transactional
+    public void resendEmailVerification(Long userId) {
+        User user = requireById(userId);
+        if (user.isEmailVerified()) {
+            throw ApiException.conflict("Email is already verified");
+        }
+        emailTokenService.sendVerification(user);
     }
 
     /** Also signs out every session: refresh tokens are revoked, so each device must log in again. */
@@ -157,6 +172,7 @@ public class UserService {
         followRepository.deleteAllInvolving(userId);
         notificationService.removeAllInvolving(userId);
         refreshTokenRepository.deleteAllForUser(userId);
+        emailTokenRepository.deleteAllForUser(userId);
         postRepository.deleteHashtagLinksForAuthor(userId);
         postRepository.deleteMentionLinksInvolving(userId);
         postRepository.deleteMediaForAuthor(userId);
@@ -170,6 +186,7 @@ public class UserService {
         user.setBio(null);
         user.setAvatarKey(null);
         user.setBannerKey(null);
+        user.setEmailVerified(false);
         user.setStatus(AccountStatus.DELETED);
     }
 
