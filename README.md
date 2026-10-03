@@ -56,9 +56,12 @@ All endpoints are under `/api`. Send `Authorization: Bearer <accessToken>` for a
 | POST / DELETE | `/users/{username}/block` | ✓ | idempotent; removes follows both ways. Blocked pairs can't follow, like or reply to each other or see each other's posts (403), and are hidden from each other's reply and follower lists |
 | GET | `/users/{username}/followers`, `/following` | – | paged |
 | GET | `/users/{username}/posts`, `/replies`, `/likes` | optional | paged |
-| POST | `/posts` | ✓ | `{content?, mediaKeys?, replyToId?}` |
+| POST | `/posts` | ✓ | `{content?, mediaKeys?, replyToId?, quotedPostId?, replyPolicy?}`. `replyPolicy` (`EVERYONE` default, `FOLLOWING` = accounts the author follows, `MENTIONED` = accounts @mentioned in the post) is set on top-level posts only (400 on replies and quotes). Replying against it is 403; the author can always reply |
+| POST | `/posts/thread` | ✓ | `{posts: [{content?, mediaKeys?}, ...], replyPolicy?}`, 2–25 posts created atomically; each replies to the previous |
+| PATCH | `/posts/{id}/reply-policy` | ✓ | `{replyPolicy}`; author-only, top-level posts only; applies to future replies |
+| GET | `/posts/{id}/thread` | optional | the conversation's top-level post plus the author's own chained posts, oldest first (others' replies excluded) |
 | GET / DELETE | `/posts/{id}` | optional / ✓ | delete is author-only (soft delete) |
-| GET | `/posts/{id}/replies` | optional | paged, oldest first |
+| GET | `/posts/{id}/replies` | optional | paged, oldest first. Every post response includes `conversationId`, `replyPolicy` and `canReply` (for the viewer) |
 | POST / DELETE | `/posts/{id}/like` | ✓ | idempotent |
 | GET | `/posts/{id}/likes` | – | users who liked, paged |
 | GET | `/notifications` | ✓ | follow / like / reply / mention notifications, newest first, paged; hides blocked or inactive actors |
